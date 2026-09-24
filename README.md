@@ -179,7 +179,7 @@ claude --model glm-5.3-flash
 
 ## vLLM concurrency note
 
-`--max-num-seqs 6` matches the validated Pod (`z3d49zt38s6rpy`, checked via the API on 2026-09-24). It caps concurrent sequences, which bounds KV-cache use with the 1M context; do not raise it without measuring memory and latency on the Pod.
+`--max-num-seqs 6` matches the previously validated Pod (its configuration was read via the API on 2026-09-24). It caps concurrent sequences, which bounds KV-cache use with the 1M context; do not raise it without measuring memory and latency on the Pod.
 
 ## vLLM memory note
 
