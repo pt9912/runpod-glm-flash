@@ -19,7 +19,7 @@ IaC skeleton for the validated GLM-5.3-Flash deployment on one NVIDIA B300 in Ru
 
 The official provider is now published in the Terraform Registry and defaults to REST API v2, but its pod/v2 implementation is still moving quickly. Before spending money, run the read-only v2 smoke test and `terraform plan`, then compare the plan with the current provider schema/release notes. In particular verify `machine_id`, B300 selection, existing Network Volume attachment, `docker_args`, ports and secret placeholders.
 
-The repo deliberately requires a `machine_id` because that is what the current official provider documentation exposes. Do not guess it.
+`machine_id` is optional. Leave it unset so RunPod picks any machine with a free B300; the REST v2 API itself has no machine field, placement is by GPU type and datacenter. Pin it only if you must, and never guess it. A pinned machine that is occupied makes the apply fail (see "If the GPU is occupied").
 
 ## Secrets
 
@@ -64,9 +64,9 @@ cp terraform.tfvars.example terraform.tfvars
 $EDITOR terraform.tfvars
 ```
 
-Set the existing Network Volume ID and a currently valid Secure Cloud B300 machine ID.
+Set the existing Network Volume ID. `machine_id` is optional (see above).
 
-A Network Volume is bound to one datacenter. The `machine_id` **must be in the same datacenter as the volume**, otherwise the apply fails. If that machine is occupied, apply fails as well; there is no fallback.
+A Network Volume is bound to one datacenter, so a B300 must be free **in that datacenter**; a free B300 elsewhere does not help. Check stock first with `./scripts/gpu-availability.sh`. If you do pin a `machine_id`, it must be in the volume's datacenter.
 
 `offline_mode` (default `true`) assumes the checkpoint is already on the volume: `HF_HUB_OFFLINE=1` is set and no `HF_TOKEN` is sent. For a fresh setup or re-download set `offline_mode = false`; downloads are then allowed and the `HF_TOKEN` secret is injected.
 
@@ -75,6 +75,8 @@ A Network Volume is bound to one datacenter. The `machine_id` **must be in the s
 ```bash
 ../scripts/plan.sh
 ```
+
+`plan.sh` first checks that `terraform/terraform.tfvars` exists and contains no `REPLACE_WITH_` placeholders (comment lines are ignored); the variables `network_volume_id` and `machine_id` also reject the placeholder values in Terraform itself.
 
 The plan is saved to `terraform/tfplan`, so the reviewed plan is exactly what gets applied. Review the entire plan. Check Secure Cloud, B300, one GPU, 50 GB container disk, existing `/workspace` Network Volume, image, 1M/MTP5 args, port 8000 and that no literal secrets appear.
 
@@ -105,7 +107,26 @@ The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID
 
 `docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning a reviewed `runpodctl` version and deciding how to handle European DST.
 
-RunPod currently exposes `pod start` and `pod stop` via `runpodctl`. If a stopped Pod's old GPU is occupied, a Network Volume lets you redeploy without losing `/workspace`. Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
+RunPod currently exposes `pod start` and `pod stop` via `runpodctl`. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
+
+## If the GPU is occupied
+
+A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed (the exact API/CLI error is not verified here). RunPod's docs describe three options:
+
+1. **Wait.** The GPU frees up once the other user stops their Pod.
+2. **Redeploy (recommended with a Network Volume).** Terminate the Pod and create a new one that attaches the same volume; `/workspace` (model, HF and vLLM caches) is untouched. With `machine_id` unset, RunPod should choose any machine with a free B300 in the volume's datacenter (confirm this in the first plan/apply):
+
+   ```bash
+   cd terraform
+   terraform apply -replace=runpod_pod.glm
+   ```
+
+   Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity.
+3. **Console migration (beta).** The RunPod console offers to migrate a stopped Pod to a machine with a free GPU. Their docs describe no API/CLI/Terraform equivalent.
+
+Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run the Ansible verification. Terraform state follows a redeploy via `-replace`, but not a console migration; after a migration the old resource is stale.
+
+For the 13/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately.
 
 ## Claude Code
 

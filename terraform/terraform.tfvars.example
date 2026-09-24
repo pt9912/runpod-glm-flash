@@ -1,6 +1,8 @@
 # No secrets belong here.
-machine_id        = "REPLACE_WITH_SECURE_B300_MACHINE_ID"
 network_volume_id = "REPLACE_WITH_EXISTING_NETWORK_VOLUME_ID"
+
+# Optional: pin a specific machine. Leave unset so RunPod picks any machine with a free B300.
+# machine_id = "REPLACE_WITH_SECURE_B300_MACHINE_ID"
 
 # true  = model is already on the volume, no HF token is sent.
 # false = fresh setup: allow downloads and inject the HF_TOKEN secret.

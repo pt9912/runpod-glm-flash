@@ -5,13 +5,24 @@ variable "runpod_base_url" {
 }
 
 variable "machine_id" {
-  description = "Secure Cloud machine ID selected for the B300 deployment. Must be in the same datacenter as the Network Volume. Discover/verify before apply."
+  description = "Optional Secure Cloud machine ID. null lets RunPod pick a machine with a free GPU of gpu_type_id (in the Network Volume's datacenter). Pinning a machine makes the apply fail whenever that machine is occupied."
   type        = string
+  default     = null
+
+  validation {
+    condition     = var.machine_id == null || !startswith(coalesce(var.machine_id, ""), "REPLACE_WITH")
+    error_message = "machine_id still contains the template placeholder. Set a real ID or leave it unset (null)."
+  }
 }
 
 variable "network_volume_id" {
   description = "Existing persistent Network Volume containing /workspace/huggingface and /workspace/vllm-cache. Volumes are bound to one datacenter; machine_id must be located there."
   type        = string
+
+  validation {
+    condition     = length(trimspace(var.network_volume_id)) > 0 && !startswith(var.network_volume_id, "REPLACE_WITH")
+    error_message = "network_volume_id must be the real ID of the existing Network Volume, not the template placeholder."
+  }
 }
 
 variable "offline_mode" {
