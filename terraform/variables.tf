@@ -26,6 +26,12 @@ variable "gpu_type_id" {
   default     = "NVIDIA B300 SXM6 AC"
 }
 
+variable "container_disk_in_gb" {
+  description = "Container disk size in GB. The model and caches live on the Network Volume, not here."
+  type        = number
+  default     = 50
+}
+
 variable "pod_name" {
   description = "Name of the RunPod Pod."
   type        = string

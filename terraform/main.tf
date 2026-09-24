@@ -4,6 +4,8 @@ provider "runpod" {
 }
 
 locals {
+  vllm_port = 8000
+
   hf_token_ref     = "{{ RUNPOD_SECRET_${var.hf_secret_name} }}"
   vllm_api_key_ref = "{{ RUNPOD_SECRET_${var.vllm_secret_name} }}"
 
@@ -12,7 +14,7 @@ locals {
     "nota-ai/GLM-5.3-Flash-Nota-NVFP4",
     "--served-model-name glm-5.3-flash",
     "--host 0.0.0.0",
-    "--port 8000",
+    "--port ${local.vllm_port}",
     "--tensor-parallel-size 1",
     "--max-model-len 1048576",
     "--kv-cache-dtype fp8",
@@ -47,15 +49,15 @@ resource "runpod_pod" "glm" {
   name        = var.pod_name
   machine_id  = var.machine_id
   image_name  = "vllm/vllm-openai:glm53-flash"
-  gpu_count   = 1
+  gpu_count   = 1 # tied to --tensor-parallel-size 1 and CUDA_VISIBLE_DEVICES=0
   gpu_type_id = var.gpu_type_id
   cloud_type  = "SECURE"
 
-  container_disk_in_gb = 50
+  container_disk_in_gb = var.container_disk_in_gb
   network_volume_id    = var.network_volume_id
   volume_mount_path    = "/workspace"
 
-  ports     = "8000/http,22/tcp"
+  ports     = "${local.vllm_port}/http,22/tcp"
   start_ssh = true
 
   # The provider expects a list of "KEY=VALUE" strings.

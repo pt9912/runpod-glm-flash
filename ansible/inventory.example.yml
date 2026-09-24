@@ -1,7 +1,7 @@
 all:
   hosts:
     glm:
-      # Option A: direct SSH address/port, if exposed by RunPod.
+      # Direct SSH address/port of the Pod (the mapped external port for 22/tcp is shown in the RunPod console).
       ansible_host: REPLACE_WITH_SSH_HOST
-      ansible_port: 22
+      ansible_port: 22 # replace with the mapped external port
       ansible_user: root

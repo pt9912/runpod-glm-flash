@@ -1,7 +1,10 @@
 # Example only. Deliberately kept outside .github/workflows/ so GitHub does not run it.
 # Move it to .github/workflows/schedule.yml only after reviewing times and adding secrets.
-# GitHub Actions cron is UTC. 13/5 example below corresponds to 07:00-20:00 CEST;
+# GitHub Actions cron is UTC. The 13/5 example below is 07:00-20:00 local time:
+#   summer (CEST, UTC+2): start 05:00 UTC, stop 18:00 UTC
+#   winter (CET,  UTC+1): start 06:00 UTC, stop 19:00 UTC
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
+# Note: scheduled runs have no `inputs.action`; map github.event.schedule to start/stop before enabling.
 name: RunPod GLM 13x5
 
 on:
@@ -13,8 +16,16 @@ on:
         type: choice
         options: [start, stop]
   # schedule:
-  #   - cron: '0 5 * * 1-5'   # 07:00 CEST (example; UTC cron)
-  #   - cron: '0 18 * * 1-5'  # 20:00 CEST (example; UTC cron)
+  #   - cron: '0 5 * * 1-5'   # start 07:00 CEST (summer; see header for winter)
+  #   - cron: '0 18 * * 1-5'  # stop  20:00 CEST (UTC cron)
+
+permissions:
+  contents: read
+
+# Never run start/stop concurrently against the same Pod.
+concurrency:
+  group: runpod-glm-pod
+  cancel-in-progress: false
 
 jobs:
   pod-action:
@@ -22,6 +33,7 @@ jobs:
     env:
       RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
       RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
+      ACTION: ${{ inputs.action }}
     steps:
       - uses: actions/checkout@v4
       - name: Guard
@@ -31,5 +43,5 @@ jobs:
       - name: Explain action
         run: |
           echo "This example intentionally does not auto-install or execute runpodctl."
-          echo "Install/pin a reviewed runpodctl release, then call scripts/pod-${{ inputs.action }}.sh."
+          echo "Install/pin a reviewed runpodctl release, then call scripts/pod-${ACTION}.sh."
           echo "The schedule block is disabled to prevent accidental B300 spend."

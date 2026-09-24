@@ -110,6 +110,10 @@ export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576
 claude --model glm-5.3-flash
 ```
 
+## vLLM concurrency note
+
+`--max-num-seqs 4` keeps concurrency deliberately low so the KV cache can serve the 1M context; throughput under parallel load is limited accordingly. Raise it only after measuring memory and latency on the Pod.
+
 ## vLLM memory note
 
 Keep `--gpu-memory-utilization 0.96` with MTP5. Do not reuse a fixed KV-cache byte value measured without MTP.
