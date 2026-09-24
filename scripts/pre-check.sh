@@ -27,7 +27,7 @@ for t in curl python3; do
   if command -v "$t" >/dev/null 2>&1; then
     ok "$t: $(command -v "$t")"
   else
-    fail "$t is not installed (required by all scripts)"
+    fail "$t is not installed (required by all scripts). Install it with your package manager (apt, dnf, brew, ...)"
   fi
 done
 
@@ -41,17 +41,17 @@ if command -v terraform >/dev/null 2>&1; then
   elif version_ge "$tf_ver" "$min_tf"; then
     ok "terraform $tf_ver (needs >= $min_tf)"
   else
-    fail "terraform $tf_ver is older than the required >= $min_tf"
+    fail "terraform $tf_ver is older than the required >= $min_tf. Update: https://developer.hashicorp.com/terraform/install"
   fi
 else
-  fail "terraform is not installed (needs >= $min_tf)"
+  fail "terraform is not installed (needs >= $min_tf). Install: https://developer.hashicorp.com/terraform/install"
 fi
 
 # ansible is only needed for the optional verification step (README step 5).
 if command -v ansible-playbook >/dev/null 2>&1; then
   ok "ansible-playbook: $(ansible-playbook --version 2>/dev/null | head -n1)"
 else
-  warn "ansible-playbook is not installed (only needed for the Ansible verification)"
+  warn "ansible-playbook is not installed (only needed for the Ansible verification). Install: https://docs.ansible.com/ansible/latest/installation_guide/"
 fi
 
 echo

@@ -63,6 +63,12 @@ Terraform only sends the RunPod Secret placeholder strings. Never replace them w
 
 Checks that `curl`, `python3` and `terraform` (version from `terraform/versions.tf`) are installed, that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `terraform.tfvars` is complete. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` and `ansible/inventory.yml` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
 
+### Tools
+
+Required: `curl`, `python3` and `terraform` (>= the version in `terraform/versions.tf`). Install them with your package manager; for Terraform use the official instructions at <https://developer.hashicorp.com/terraform/install>. Optional: `ansible-playbook` for the verification step (<https://docs.ansible.com/ansible/latest/installation_guide/>).
+
+`runpodctl` is **not** needed by this repo. Install it only if you want it for other things, following <https://docs.runpod.io/runpodctl/overview>. One useful case is registering your SSH public key, which the Ansible verification needs (`ssh-keygen -t ed25519`, then either paste `~/.ssh/id_ed25519.pub` into the SSH Public Keys field of your RunPod account settings, or run `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub`).
+
 ## 1. Read-only REST v2 check
 
 ```bash
