@@ -35,8 +35,7 @@ jobs:
       RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
       ACTION: ${{ inputs.action }}
     steps:
-      # When enabling: pin actions by commit SHA. Also verify that the pinned runpodctl
-      # reads RUNPOD_API_KEY from the environment (not confirmed in the docs).
+      # When enabling: pin actions by commit SHA.
       - uses: actions/checkout@v4
       - name: Guard
         run: |
@@ -44,6 +43,6 @@ jobs:
           test -n "$RUNPOD_POD_ID"
       - name: Explain action
         run: |
-          echo "This example intentionally does not auto-install or execute runpodctl."
-          echo "Install/pin a reviewed runpodctl release, then call scripts/pod-${ACTION}.sh."
+          echo "This example intentionally does not call the RunPod API."
+          echo "When enabling it, run scripts/pod-${ACTION}.sh (needs only curl and python3)."
           echo "The schedule block is disabled to prevent accidental B300 spend."

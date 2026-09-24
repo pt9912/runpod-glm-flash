@@ -54,6 +54,15 @@ Secret names are case-sensitive and must match `vllm_secret_name` / `hf_secret_n
 
 Terraform only sends the RunPod Secret placeholder strings. Never replace them with the actual token in HCL.
 
+## 0. Pre-flight check
+
+```bash
+./scripts/pre-check.sh            # tools, environment, local files
+./scripts/pre-check.sh --online   # additionally one read-only API call to verify the key
+```
+
+Checks that `curl`, `python3` and `terraform` (version from `terraform/versions.tf`) are installed, that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `terraform.tfvars` is complete. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` and `ansible/inventory.yml` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
+
 ## 1. Read-only REST v2 check
 
 ```bash
@@ -82,7 +91,7 @@ A Network Volume is bound to one datacenter, so a B300 must be free **in that da
 ../scripts/plan.sh
 ```
 
-`plan.sh` first checks that `terraform/terraform.tfvars` exists and contains no `REPLACE_WITH_` placeholders (comment lines are ignored); the variables `network_volume_id` and `machine_id` also reject the placeholder values in Terraform itself.
+`plan.sh` first runs `scripts/pre-check.sh` (tools, environment, `terraform/terraform.tfvars` without `REPLACE_WITH_` placeholders; comment lines are ignored); the variables `network_volume_id` and `machine_id` also reject the placeholder values in Terraform itself.
 
 The plan is saved to `terraform/tfplan`, so the reviewed plan is exactly what gets applied. Review the entire plan. Check Secure Cloud, B300, one GPU, 50 GB container disk, existing `/workspace` Network Volume, image, 1M/MTP5 args, port 8000 and that no literal secrets appear.
 
@@ -113,9 +122,9 @@ The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID
 
 ## 13/5 scheduling
 
-`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning a reviewed `runpodctl` version and deciding how to handle European DST.
+`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
-RunPod currently exposes `pod start` and `pod stop` via `runpodctl`. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
+`scripts/pod-start.sh` and `scripts/pod-stop.sh` call the REST v2 endpoint `POST /v2/pods/{id}/action` (`start`/`stop`); no `runpodctl` is needed, only `curl` and `python3`. Starting bills the GPU immediately. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
 
 ## If the GPU is occupied
 
