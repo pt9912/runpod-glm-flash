@@ -4,7 +4,7 @@ IaC skeleton for the validated GLM-5.3-Flash deployment on one NVIDIA B300 in Ru
 
 ## Current architecture
 
-- **Terraform:** official `runpod/runpod` provider, pinned to `1.0.2`
+- **Terraform:** official `runpod/runpod` provider, pinned to `1.0.8` (`network_volume_id` needs >= 1.0.6; 1.0.9 has a schema bug and fails to load with Terraform 1.14)
 - **API base:** `https://api.runpod.io/v2`
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
 - **Image:** `vllm/vllm-openai:glm53-flash`
@@ -25,10 +25,18 @@ The repo deliberately requires a `machine_id` because that is what the current o
 
 No secret values belong in this repository or `terraform.tfvars`.
 
-Set locally:
+Set locally, either directly:
 
 ```bash
 export RUNPOD_API_KEY='...'
+```
+
+or via a git-ignored `.env` created from the template:
+
+```bash
+cp .env.example .env
+$EDITOR .env
+set -a; source .env; set +a
 ```
 
 Create these separately in the RunPod console:

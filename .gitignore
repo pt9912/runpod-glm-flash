@@ -11,6 +11,7 @@ tfplan
 # Secrets / environment
 .env
 .env.*
+!.env.example
 .envrc
 *.pem
 *.key
