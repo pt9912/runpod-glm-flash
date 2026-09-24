@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Read-only: shows per-datacenter stock for a GPU type, so you can see whether
-# a B300 is free in the datacenter of your Network Volume before (re)deploying.
-# Availability is an ordering hint, not a reservation.
+# Read-only: shows current stock of a GPU type (overall and per datacenter), so you
+# can see whether a B300 is free, and where, before (re)deploying.
+# Availability is an ordering hint, not a reservation: a create can still fail.
 #
 # Usage: gpu-availability.sh [GPU_MATCH] [DATACENTER_ID]
 #   GPU_MATCH      case-insensitive substring of the GPU id/name (default: B300)
-#   DATACENTER_ID  only show this datacenter (e.g. the one your volume lives in)
+#   DATACENTER_ID  only report this datacenter (e.g. the one your volume lives in)
+#
+# Exit codes: 0 = in stock (in the given datacenter, if any), 2 = not in stock or
+# no such GPU type, 1 = API/transport error.
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 # shellcheck source=scripts/_api.sh
@@ -15,21 +18,38 @@ MATCH="${1:-B300}"
 DC="${2:-}"
 
 # Capture first so an API failure is not followed by a JSON parse traceback.
-response="$(api_get "/catalog/datacenters?include=GPU_AVAILABILITY")"
+# Note: a GPU without stock is absent from the per-datacenter catalog, so the
+# GPU catalog is queried instead; it always lists the type and its overall stock.
+response="$(api_get "/catalog/gpus?include=AVAILABILITY&product=POD")"
 
 printf '%s' "$response" | python3 -c '
 import json, sys
 match, dc = sys.argv[1].lower(), sys.argv[2].lower()
-rows = []
-for d in json.load(sys.stdin)["dataCenters"]:
-    if dc and d["id"].lower() != dc:
-        continue
-    for g in d.get("gpuAvailability", []):
-        if match in g["id"].lower() or match in g["name"].lower():
-            rows.append((d["id"], d["region"], g["name"], g["availability"]))
-if not rows:
-    print("no datacenter offers a GPU matching %r" % match, file=sys.stderr)
+data = json.load(sys.stdin)
+gpus = data.get("gpus", data) if isinstance(data, dict) else data
+hits = [g for g in gpus if match in g["id"].lower() or match in g["name"].lower()]
+if not hits:
+    print("no GPU type in the catalog matches %r" % match, file=sys.stderr)
     sys.exit(2)
-for r in sorted(rows, key=lambda r: (r[3] == "NONE", r[0])):
-    print("%-12s %-14s %-28s %s" % r)
+in_stock = False
+for g in hits:
+    dcs = g.get("dataCenters", [])
+    if dc:
+        sel = [d for d in dcs if d["id"].lower() == dc]
+        avail = sel[0]["availability"] if sel else "NONE"
+        where = "in %s" % dc.upper()
+    else:
+        avail = g.get("availability", "NONE")
+        where = "overall"
+    price = g.get("price", {}).get("secure")
+    print("%s (%s): %s %s%s" % (g["id"], g["name"], avail, where,
+                                "   secure $%s/h" % price if price is not None else ""))
+    if avail != "NONE":
+        in_stock = True
+        if not dc:
+            for d in sorted(dcs, key=lambda d: d["id"]):
+                print("    %-12s %s" % (d["id"], d["availability"]))
+    else:
+        print("    no stock" + (" in this datacenter" if dc else " in any datacenter"))
+sys.exit(0 if in_stock else 2)
 ' "$MATCH" "$DC"
