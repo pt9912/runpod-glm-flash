@@ -164,6 +164,35 @@ For the 13/5 schedule this means: stop/start is cheap but can fail overnight; te
 - `terraform destroy` (from `terraform/`) terminates the Pod and removes it from state. It does **not** delete the Network Volume, which is not managed here, so the model and caches survive.
 - `terraform apply -replace=runpod_pod.glm` destroys first and then creates: if B300 capacity is missing at that moment, you end up with no Pod.
 
+## Optional: Runpod MCP servers
+
+This repo does not need MCP. Runpod offers two [MCP servers](https://docs.runpod.io/get-started/mcp-servers) that let an AI coding agent such as Claude Code work with Runpod directly. The commands below are taken from Runpod's documentation and were not tested with this repo; the scripts here work without them.
+
+**Docs server** (read-only documentation search, no login):
+
+```bash
+claude mcp add runpod-docs --scope user --transport http https://docs.runpod.io/mcp
+```
+
+**API server** (manages Pods, endpoints, templates, network volumes and registries through the REST API, v2 by default). It has **write access to your account and can start billable Pods**, so treat it like the API key itself. Recommended setup is the hosted server with "Sign in with Runpod" (OAuth): a browser opens on first use, and no key is stored on disk.
+
+```bash
+claude mcp add --transport http runpod -s user https://mcp.getrunpod.io/
+```
+
+Alternatives:
+
+- Guided installer, detects your clients (Claude Code, Claude Desktop, Cursor, Windsurf, VS Code): `npx @runpod/mcp-server@latest add`; undo with `npx @runpod/mcp-server@latest remove`.
+- Hosted server with an API key instead of OAuth: add `--header "Authorization: Bearer $RUNPOD_API_KEY"` to the command above.
+- Local server: `claude mcp add runpod --scope user -e RUNPOD_API_KEY=... -- npx -y @runpod/mcp-server@latest`. The key is then stored in your Claude Code configuration, so prefer the OAuth variant.
+
+Rules of thumb:
+
+- Use `-s user` / `--scope user`. A project-scoped configuration is written to a `.mcp.json` in the repository and could end up in a commit; never put a key there.
+- Use an API key with only the permissions you need (see "API key permissions"), and disable or delete it when you no longer need it.
+- Check the connection with `/mcp` inside Claude Code; remove a server with `claude mcp remove runpod`.
+- Starting or creating Pods through an agent bills the GPU exactly like the scripts do. Keep reviewing what the agent is about to do.
+
 ## Claude Code
 
 ```bash
