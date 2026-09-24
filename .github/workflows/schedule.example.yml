@@ -1,0 +1,34 @@
+# Example only. Rename to schedule.yml only after reviewing times and adding secrets.
+# GitHub Actions cron is UTC. 13/5 example below corresponds to 07:00-20:00 CEST;
+# DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
+name: RunPod GLM 13x5
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: start or stop
+        required: true
+        type: choice
+        options: [start, stop]
+  # schedule:
+  #   - cron: '0 5 * * 1-5'   # 07:00 CEST (example; UTC cron)
+  #   - cron: '0 18 * * 1-5'  # 20:00 CEST (example; UTC cron)
+
+jobs:
+  pod-action:
+    runs-on: ubuntu-latest
+    env:
+      RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+      RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Guard
+        run: |
+          test -n "$RUNPOD_API_KEY"
+          test -n "$RUNPOD_POD_ID"
+      - name: Explain action
+        run: |
+          echo "This example intentionally does not auto-install or execute runpodctl."
+          echo "Install/pin a reviewed runpodctl release, then call scripts/pod-${{ inputs.action }}.sh."
+          echo "The schedule block is disabled to prevent accidental B300 spend."

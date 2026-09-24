@@ -1,0 +1,8 @@
+# No secrets belong here.
+machine_id        = "REPLACE_WITH_SECURE_B300_MACHINE_ID"
+network_volume_id = "REPLACE_WITH_EXISTING_NETWORK_VOLUME_ID"
+
+# Usually no need to change these:
+gpu_type_id    = "NVIDIA B300 SXM6 AC"
+pod_name       = "glm-5.3-flash-b300"
+runpod_base_url = "https://api.runpod.io/v2"

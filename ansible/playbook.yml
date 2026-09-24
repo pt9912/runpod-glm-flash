@@ -1,0 +1,6 @@
+---
+- name: Verify GLM RunPod
+  hosts: glm
+  gather_facts: false
+  roles:
+    - verify_glm

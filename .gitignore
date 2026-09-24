@@ -1,0 +1,25 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+*.auto.tfvars
+crash.log
+
+# Secrets / environment
+.env
+.env.*
+*.pem
+*.key
+*.vault
+vault.yml
+secrets.yml
+
+# Local Ansible inventory
+ansible/inventory.yml
+ansible/inventory.local.yml
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store

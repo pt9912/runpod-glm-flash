@@ -1,0 +1,74 @@
+---
+- name: Check NVIDIA GPU
+  ansible.builtin.command: nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+  register: gpu
+  changed_when: false
+
+- name: Show GPU
+  ansible.builtin.debug:
+    var: gpu.stdout
+
+- name: Check Hugging Face cache
+  ansible.builtin.stat:
+    path: /workspace/huggingface
+  register: hf_cache
+
+- name: Assert Hugging Face cache exists
+  ansible.builtin.assert:
+    that: hf_cache.stat.exists and hf_cache.stat.isdir
+    fail_msg: /workspace/huggingface is missing
+
+- name: Check persistent vLLM cache
+  ansible.builtin.stat:
+    path: /workspace/vllm-cache
+  register: vllm_cache
+
+- name: Assert persistent vLLM cache exists
+  ansible.builtin.assert:
+    that: vllm_cache.stat.exists and vllm_cache.stat.isdir
+    fail_msg: /workspace/vllm-cache is missing
+
+- name: Wait for vLLM port
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 8000
+    timeout: 1800
+
+- name: Verify unauthenticated v1 request is rejected
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8000/v1/models
+    status_code: 401
+    return_content: true
+  register: unauth
+
+- name: Read vLLM API key from pod environment without printing it
+  ansible.builtin.shell: 'printf %s "$VLLM_API_KEY"'
+  args:
+    executable: /bin/bash
+  register: vllm_key
+  changed_when: false
+  no_log: true
+
+- name: Assert API key exists
+  ansible.builtin.assert:
+    that: vllm_key.stdout | length > 0
+    fail_msg: VLLM_API_KEY is empty; the public API may be unprotected
+  no_log: true
+
+- name: Query authenticated model endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8000/v1/models
+    headers:
+      Authorization: "Bearer {{ vllm_key.stdout }}"
+    status_code: 200
+    return_content: true
+  register: models
+  no_log: true
+
+- name: Assert served model and 1M context
+  ansible.builtin.assert:
+    that:
+      - models.json.data | length > 0
+      - models.json.data[0].id == 'glm-5.3-flash'
+      - models.json.data[0].max_model_len | int == 1048576
+    fail_msg: vLLM model metadata does not match the expected GLM 1M deployment
