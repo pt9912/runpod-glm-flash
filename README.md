@@ -45,6 +45,8 @@ $EDITOR .env
 set -a; source .env; set +a
 ```
 
+**API key permissions:** read-only calls (`v2-smoke.sh`, `gpu-availability.sh`, `pre-check.sh --online`) work with a read-only key, but `pod-start.sh`, `pod-stop.sh` and `terraform apply` need write access to Pods. With a read-only or too narrowly restricted key they fail with `HTTP 403` ("Access to the requested resource was denied"). That is a permission problem, not a full GPU. Create a key with write access in the RunPod console (Settings > API Keys; RunPod recommends restricted keys with the minimum permissions). Note that `pre-check.sh --online` cannot detect missing write access, because it only performs a read.
+
 Create these separately in the RunPod console:
 
 - `VLLM_API_KEY`
@@ -134,14 +136,16 @@ The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID
 
 ## If the GPU is occupied
 
-A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed (the exact API/CLI error is not verified here). RunPod's docs describe three options:
+A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed. Observed on 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; nothing is started or billed in that case. RunPod's docs describe three options:
 
-1. **Wait.** The GPU frees up once the other user stops their Pod.
+1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/wait-for-gpu.sh B300 EU-NL-1` (use the datacenter of your volume) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything. Stock changes within minutes, so act right away and expect that a start can still fail.
 2. **Redeploy (recommended with a Network Volume).** Terminate the Pod and create a new one that attaches the same volume; `/workspace` (model, HF and vLLM caches) is untouched. With `machine_id` unset, RunPod should choose any machine with a free B300 in the volume's datacenter (confirm this in the first plan/apply):
 
    ```bash
    cd terraform
-   terraform apply -replace=runpod_pod.glm
+   terraform state list                      # is runpod_pod.glm in the state?
+   terraform apply -replace=runpod_pod.glm   # yes: replace it
+   ../scripts/plan.sh && terraform apply tfplan   # no (e.g. the Pod was created outside Terraform): plain plan and apply
    ```
 
    Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity.
@@ -174,7 +178,7 @@ claude --model glm-5.3-flash
 
 ## vLLM concurrency note
 
-`--max-num-seqs 4` keeps concurrency deliberately low so the KV cache can serve the 1M context; throughput under parallel load is limited accordingly. Raise it only after measuring memory and latency on the Pod.
+`--max-num-seqs 6` matches the validated Pod (`z3d49zt38s6rpy`, checked via the API on 2026-09-24). It caps concurrent sequences, which bounds KV-cache use with the 1M context; do not raise it without measuring memory and latency on the Pod.
 
 ## vLLM memory note
 

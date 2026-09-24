@@ -20,7 +20,7 @@ locals {
     "--kv-cache-dtype fp8",
     "--enable-chunked-prefill",
     "--max-num-batched-tokens 8192",
-    "--max-num-seqs 4",
+    "--max-num-seqs 6",
     "--tool-call-parser glm47",
     "--reasoning-parser glm45",
     "--enable-auto-tool-choice",

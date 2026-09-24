@@ -14,6 +14,8 @@ set -e
 
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$out" >&2
+  echo >&2
+  api_auth_hint "$out" && exit 1
   echo "pod stop failed for Pod $RUNPOD_POD_ID" >&2
   exit 1
 fi

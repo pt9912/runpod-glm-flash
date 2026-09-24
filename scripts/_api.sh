@@ -37,3 +37,25 @@ api_get() { _api_request GET "$1"; }
 
 # api_post PATH JSON_BODY: state-changing POST (used by pod-start/stop).
 api_post() { _api_request POST "$1" "$2"; }
+
+# api_auth_hint OUTPUT: if OUTPUT (the captured stderr of a failed call) starts with
+# "HTTP 401" or "HTTP 403" (our own message format), print an explanation and
+# return 0; otherwise return 1 so the caller can show its own hint.
+api_auth_hint() {
+  case "$(printf '%s' "$1" | head -n1)" in
+    "HTTP 401"*)
+      echo "The API key was rejected (invalid or expired). Create a new key in the RunPod console (Settings > API Keys)." >&2
+      ;;
+    "HTTP 403"*)
+      cat >&2 <<'MSG'
+The API key is valid but not allowed to do this. Read calls (smoke test, pre-check --online) work
+with a read-only key, but starting/stopping/creating Pods needs write access. Create a new API key
+in the RunPod console (Settings > API Keys) with write access to Pods (or full access), and put
+it in .env. This is a permission problem, not a full GPU.
+MSG
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}

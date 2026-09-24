@@ -4,7 +4,8 @@
 # Availability is an ordering hint, not a reservation: a create can still fail.
 #
 # Usage: gpu-availability.sh [GPU_MATCH] [DATACENTER_ID]
-#   GPU_MATCH      case-insensitive substring of the GPU id/name (default: B300)
+#   GPU_MATCH      case-insensitive GPU id/name (default: B300); an exact id/name match wins,
+#                  otherwise every GPU containing the text matches
 #   DATACENTER_ID  only report this datacenter (e.g. the one your volume lives in)
 #
 # Exit codes: 0 = in stock (in the given datacenter, if any), 2 = not in stock or
@@ -27,7 +28,8 @@ import json, sys
 match, dc = sys.argv[1].lower(), sys.argv[2].lower()
 data = json.load(sys.stdin)
 gpus = data.get("gpus", data) if isinstance(data, dict) else data
-hits = [g for g in gpus if match in g["id"].lower() or match in g["name"].lower()]
+exact = [g for g in gpus if match in (g["id"].lower(), g["name"].lower())]
+hits = exact or [g for g in gpus if match in g["id"].lower() or match in g["name"].lower()]
 if not hits:
     print("no GPU type in the catalog matches %r" % match, file=sys.stderr)
     sys.exit(2)
