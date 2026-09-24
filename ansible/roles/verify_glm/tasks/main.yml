@@ -41,8 +41,14 @@
     return_content: true
   register: unauth
 
+# RunPod injects container env vars into PID 1; SSH login shells often do not see them.
 - name: Read vLLM API key from pod environment without printing it
-  ansible.builtin.shell: 'printf %s "$VLLM_API_KEY"'
+  ansible.builtin.shell: |
+    if [ -n "${VLLM_API_KEY:-}" ]; then
+      printf %s "$VLLM_API_KEY"
+    else
+      tr '\0' '\n' < /proc/1/environ | sed -n 's/^VLLM_API_KEY=//p' | head -n1 | tr -d '\n'
+    fi
   args:
     executable: /bin/bash
   register: vllm_key

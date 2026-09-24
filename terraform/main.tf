@@ -26,6 +26,21 @@ locals {
     "--gpu-memory-utilization 0.96",
     "--speculative-config '{\"method\":\"mtp\",\"num_speculative_tokens\":5}'"
   ])
+
+  env = merge(
+    {
+      HF_HOME                     = "/workspace/huggingface"
+      HF_HUB_CACHE                = "/workspace/huggingface/hub"
+      HF_XET_HIGH_PERFORMANCE     = "1"
+      CUDA_VISIBLE_DEVICES        = "0"
+      VLLM_ENGINE_READY_TIMEOUT_S = "3600"
+      VLLM_CACHE_ROOT             = "/workspace/vllm-cache"
+      VLLM_API_KEY                = local.vllm_api_key_ref
+    },
+    # Offline: the checkpoint is already on the volume, so no HF token is injected.
+    # Online (offline_mode = false): allow downloads and pass the HF token secret.
+    var.offline_mode ? { HF_HUB_OFFLINE = "1" } : { HF_TOKEN = local.hf_token_ref },
+  )
 }
 
 resource "runpod_pod" "glm" {
@@ -43,17 +58,8 @@ resource "runpod_pod" "glm" {
   ports     = "8000/http,22/tcp"
   start_ssh = true
 
-  env = {
-    HF_HOME                     = "/workspace/huggingface"
-    HF_HUB_CACHE                = "/workspace/huggingface/hub"
-    HF_HUB_OFFLINE              = "1"
-    HF_XET_HIGH_PERFORMANCE     = "1"
-    CUDA_VISIBLE_DEVICES        = "0"
-    VLLM_ENGINE_READY_TIMEOUT_S = "3600"
-    VLLM_CACHE_ROOT             = "/workspace/vllm-cache"
-    HF_TOKEN                    = local.hf_token_ref
-    VLLM_API_KEY                = local.vllm_api_key_ref
-  }
+  # The provider expects a list of "KEY=VALUE" strings.
+  env = [for k, v in local.env : "${k}=${v}"]
 
   docker_args = local.vllm_args
 }

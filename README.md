@@ -33,8 +33,10 @@ export RUNPOD_API_KEY='...'
 
 Create these separately in the RunPod console:
 
-- `HF_TOKEN`
 - `VLLM_API_KEY`
+- `HF_TOKEN` (only needed for a fresh setup with `offline_mode = false`)
+
+Secret names are case-sensitive and must match `vllm_secret_name` / `hf_secret_name` exactly (defaults: `VLLM_API_KEY`, `HF_TOKEN`).
 
 Terraform only sends the RunPod Secret placeholder strings. Never replace them with the actual token in HCL.
 
@@ -55,6 +57,10 @@ $EDITOR terraform.tfvars
 ```
 
 Set the existing Network Volume ID and a currently valid Secure Cloud B300 machine ID.
+
+A Network Volume is bound to one datacenter. The `machine_id` **must be in the same datacenter as the volume**, otherwise the apply fails. If that machine is occupied, apply fails as well; there is no fallback.
+
+`offline_mode` (default `true`) assumes the checkpoint is already on the volume: `HF_HUB_OFFLINE=1` is set and no `HF_TOKEN` is sent. For a fresh setup or re-download set `offline_mode = false`; downloads are then allowed and the `HF_TOKEN` secret is injected.
 
 ## 3. Plan only
 
@@ -81,6 +87,10 @@ $EDITOR inventory.yml
 ansible-playbook playbook.yml
 ```
 
+Security note: the Pod exposes `22/tcp` with root login (`start_ssh = true`) because the Ansible role connects as `root`, and `ansible.cfg` sets `host_key_checking = False` because Pod host keys change on redeploy. Both are deliberate trade-offs; use SSH keys only, and remove `22/tcp` from `ports` in `terraform/main.tf` once you no longer need verification or shell access.
+
+The role reads `VLLM_API_KEY` from the shell environment and falls back to `/proc/1/environ`, because RunPod injects container env vars into PID 1 and SSH login shells often do not see them.
+
 The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID and 1M max context.
 
 ## 13/5 scheduling
@@ -104,4 +114,4 @@ claude --model glm-5.3-flash
 
 Keep `--gpu-memory-utilization 0.96` with MTP5. Do not reuse a fixed KV-cache byte value measured without MTP.
 
-`HF_HUB_OFFLINE=1` assumes the complete checkpoint is already on the persistent Network Volume.
+`HF_HUB_OFFLINE=1` (default, `offline_mode = true`) assumes the complete checkpoint is already on the persistent Network Volume.
