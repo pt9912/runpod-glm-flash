@@ -3,33 +3,30 @@
 BASE="${RUNPOD_BASE_URL:-https://api.runpod.io/v2}"
 
 # _api_request METHOD PATH [JSON_BODY] -> prints the response body on 2xx;
-# otherwise prints status and body to stderr and returns 1.
+# otherwise prints "HTTP <code> from METHOD URL" and the body to stderr, returns 1.
 # The auth header goes through stdin (--config -) so the key never appears in
-# `ps`; the status is checked manually so this works with curl < 7.76
-# (no --fail-with-body).
+# `ps`. The status is read from `-w` (works with curl < 7.76, no --fail-with-body).
+# No temp file is used, so nothing can be left behind on Ctrl-C.
 _api_request() {
-  local method="$1" path="$2" data="${3:-}" body code
-  body="$(mktemp)"
-  local -a args=(-sS -o "$body" -w '%{http_code}' -X "$method")
+  local method="$1" path="$2" data="${3:-}" resp code body
+  local -a args=(-sS -w $'\n%{http_code}' -X "$method")
   if [ -n "$data" ]; then
     args+=(-H 'Content-Type: application/json' -d "$data")
   fi
-  if ! code="$(curl "${args[@]}" --config - "${BASE%/}${path}" <<EOT
+  if ! resp="$(curl "${args[@]}" --config - "${BASE%/}${path}" <<EOT
 header = "Authorization: Bearer ${RUNPOD_API_KEY}"
 EOT
   )"; then
-    rm -f "$body"
     return 1
   fi
+  code="${resp##*$'\n'}"
+  body="${resp%$'\n'*}"
   if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
     echo "HTTP $code from ${method} ${BASE%/}${path}" >&2
-    cat "$body" >&2
-    echo >&2
-    rm -f "$body"
+    printf '%s\n' "$body" >&2
     return 1
   fi
-  cat "$body"
-  rm -f "$body"
+  printf '%s' "$body"
 }
 
 # api_get PATH: read-only GET.
@@ -58,4 +55,40 @@ MSG
       return 1
       ;;
   esac
+}
+
+# api_pod_info ID: GET the Pod and print "name<TAB>status<TAB>cost" (non-sensitive
+# fields only; the Pod object also contains env). Fields missing in the response
+# are printed as "?". Returns 1 (message on stderr) if the GET fails.
+api_pod_info() {
+  local resp
+  resp="$(api_get "/pods/$1")" || return 1
+  printf '%s' "$resp" | python3 -c '
+import json, sys
+try:
+    p = json.load(sys.stdin)
+except Exception:
+    p = {}
+if not isinstance(p, dict):
+    p = {}
+print("\t".join(str(p.get(k, "?")) for k in ("name", "status", "cost")))
+'
+}
+
+# api_print_pod: read a 2xx action response on stdin and print id and status only.
+# Parses defensively: the success body shape of the action endpoint is unverified,
+# and an accepted action must never be reported as a failure.
+api_print_pod() {
+  python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    p = json.loads(raw)
+except Exception:
+    p = None
+if isinstance(p, dict) and ("id" in p or "status" in p):
+    print("Pod %s: status=%s" % (p.get("id", "?"), p.get("status", "?")))
+else:
+    print("Action accepted (HTTP 2xx); response has no status. Check with scripts/v2-smoke.sh.")
+'
 }

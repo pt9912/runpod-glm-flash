@@ -5,13 +5,36 @@ set -euo pipefail
 # shellcheck source=scripts/_api.sh
 source "$(dirname "$0")/_api.sh"
 
-# Starting a Pod bills the GPU (B300: about $7.89/h) from the moment it runs.
+# 1. Show which Pod this acts on (a stale RUNPOD_POD_ID would start the wrong one).
+set +e
+info="$(api_pod_info "$RUNPOD_POD_ID" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  printf '%s\n' "$info" >&2
+  echo >&2
+  api_auth_hint "$info" && exit 1
+  case "$(printf '%s' "$info" | head -n1)" in
+    "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID (a redeploy changes the Pod ID; see 'terraform output pod_id')." >&2 ;;
+    *) echo "Could not read Pod $RUNPOD_POD_ID; nothing was started." >&2 ;;
+  esac
+  exit 1
+fi
+IFS=$'\t' read -r name status cost <<<"$info"
+echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
+case "$status" in
+  RUNNING|STARTING|PROVISIONING)
+    echo "Already $status; nothing to do."
+    exit 0
+    ;;
+esac
+
+# 2. Start. This bills the GPU from the moment it runs.
 # A stopped Pod resumes on its original machine. If another user rented that GPU
 # meanwhile, the API answers (observed 2026-09-24):
 #   HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}
-# That case gets a targeted message below; every other failure is passed through
-# with the generic hint. HTTP 409 means the Pod's current status does not allow
-# "start" (for example it is already running); 401/403 are key problems.
+# Only that case gets the redeploy advice. 404 = unknown Pod, 409 = the current
+# status does not allow "start", 401/403 = API key problems.
 set +e
 out="$(api_post "/pods/$RUNPOD_POD_ID/action" '{"action":"start"}' 2>&1)"
 rc=$?
@@ -21,26 +44,27 @@ if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$out" >&2
   echo >&2
   api_auth_hint "$out" && exit 1
-  if printf '%s' "$out" | grep -q "not enough free GPUs"; then
-    echo "The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed)." >&2
-    echo "Options: wait and retry, or redeploy with the same volume; see README \"If the GPU is occupied\"." >&2
-    echo >&2
-  fi
-  cat >&2 <<HINT
-
-pod start failed for Pod $RUNPOD_POD_ID.
-If the GPU on the Pod's machine is occupied, see README "If the GPU is occupied":
-  - check stock in the Network Volume's datacenter: scripts/gpu-availability.sh B300 <DATACENTER>
-  - redeploy with the same volume: see README (terraform apply -replace=runpod_pod.glm if the Pod is in the
-    Terraform state, otherwise plan.sh and terraform apply tfplan)
+  first="$(printf '%s' "$out" | head -n1)"
+  case "$first" in
+    "HTTP 400"*)
+      if printf '%s' "$out" | grep -q "not enough free GPUs"; then
+        cat >&2 <<HINT
+The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed).
+Options: wait and retry, or redeploy with the same volume; see README "If the GPU is occupied":
+  - poll the stock: scripts/wait-for-gpu.sh B300 <DATACENTER OF YOUR VOLUME>
+  - redeploy: terraform apply -replace=runpod_pod.glm if the Pod is in the Terraform state,
+    otherwise scripts/plan.sh and terraform apply tfplan
 A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
 HINT
+      else
+        echo "The API rejected the request (see the message above); nothing was started." >&2
+      fi
+      ;;
+    "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID." >&2 ;;
+    "HTTP 409"*) echo "The Pod's current status ($status) does not allow 'start' (it may already be running)." >&2 ;;
+    *) echo "pod start failed for Pod $RUNPOD_POD_ID (see the message above)." >&2 ;;
+  esac
   exit 1
 fi
 
-# Print only non-sensitive fields; the Pod object also contains env.
-printf '%s' "$out" | python3 -c '
-import json, sys
-p = json.load(sys.stdin)
-print("Pod %s: status=%s" % (p.get("id"), p.get("status")))
-'
+printf '%s' "$out" | api_print_pod

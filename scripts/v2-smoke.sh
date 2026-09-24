@@ -11,7 +11,11 @@ response="$(api_get /pods)"
 printf '%s' "$response" | python3 -c '
 import json, sys
 data = json.load(sys.stdin)
-pods = data.get("pods", data) if isinstance(data, dict) else data
+pods = data.get("pods") if isinstance(data, dict) else data
+if not isinstance(pods, list):
+    print("HTTP ok, but the response has an unexpected shape (no pods list)")
+    sys.exit(0)
+pods = [p for p in pods if isinstance(p, dict)]
 keys = ("id", "name", "status", "desiredStatus", "costPerHr")
 print("HTTP ok; %d pod(s)" % len(pods))
 for p in pods:

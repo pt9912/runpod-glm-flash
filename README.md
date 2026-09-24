@@ -1,6 +1,8 @@
-# runpod-glm
+# runpod-glm-flash
 
 IaC skeleton for the validated GLM-5.3-Flash deployment on one NVIDIA B300 in RunPod Secure Cloud.
+
+All commands below are run from the repository root unless a block says otherwise.
 
 ## Current architecture
 
@@ -82,31 +84,30 @@ This performs a GET against `/v2/pods`; it does not create a GPU. It prints only
 ## 2. Configure
 
 ```bash
-cd terraform
-cp terraform.tfvars.example terraform.tfvars
-$EDITOR terraform.tfvars
+cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+$EDITOR terraform/terraform.tfvars
 ```
 
 Set the existing Network Volume ID. `machine_id` is optional (see above).
 
-A Network Volume is bound to one datacenter, so a B300 must be free **in that datacenter**; a free B300 elsewhere does not help. Check stock first with `./scripts/gpu-availability.sh`. If you do pin a `machine_id`, it must be in the volume's datacenter.
+A Network Volume is bound to one datacenter, so a B300 must be free **in that datacenter**; a free B300 elsewhere does not help. Check stock first with `./scripts/gpu-availability.sh B300 <DATACENTER>` (without a datacenter it shows only the overall stock). `B300` matches the exact GPU name; `gpu_type_id` uses the full id `NVIDIA B300 SXM6 AC`, which you can pass as well. If no exact id/name matches, the script lists every GPU containing the text and says so. Exit codes: 0 in stock, 2 no stock, 4 unknown GPU type or datacenter (typo), 1 API error. If you do pin a `machine_id`, it must be in the volume's datacenter.
 
 `offline_mode` (default `true`) assumes the checkpoint is already on the volume: `HF_HUB_OFFLINE=1` is set and no `HF_TOKEN` is sent. For a fresh setup or re-download set `offline_mode = false`; downloads are then allowed and the `HF_TOKEN` secret is injected.
 
 ## 3. Plan only
 
 ```bash
-../scripts/plan.sh
+./scripts/plan.sh
 ```
 
-`plan.sh` first runs `scripts/pre-check.sh` (tools, environment, `terraform/terraform.tfvars` without `REPLACE_WITH_` placeholders; comment lines are ignored); the variables `network_volume_id` and `machine_id` also reject the placeholder values in Terraform itself.
+`plan.sh` first runs `scripts/pre-check.sh` (tools, environment, `terraform/terraform.tfvars` without `REPLACE_WITH_` placeholders; comments are ignored, and variables from `TF_VAR_*` or `*.auto.tfvars` also count); the variables `network_volume_id` and `machine_id` also reject the placeholder values in Terraform itself.
 
 The plan is saved to `terraform/tfplan`, so the reviewed plan is exactly what gets applied. Review the entire plan. Check Secure Cloud, B300, one GPU, 50 GB container disk, existing `/workspace` Network Volume, image, 1M/MTP5 args, port 8000 and that no literal secrets appear.
 
 ## 4. Apply intentionally
 
 ```bash
-terraform apply tfplan   # run from terraform/
+(cd terraform && terraform apply tfplan)
 ```
 
 This is the first step that can start billable B300 compute. There is intentionally no automatic apply script.
@@ -114,10 +115,11 @@ This is the first step that can start billable B300 compute. There is intentiona
 ## 5. Verify with Ansible
 
 ```bash
-cd ../ansible
+cd ansible
 cp inventory.example.yml inventory.yml
 $EDITOR inventory.yml
 ansible-playbook playbook.yml
+cd ..
 ```
 
 Security note: the Pod exposes `22/tcp` with root login (`start_ssh = true`) because the Ansible role connects as `root`, and `ansible.cfg` sets `host_key_checking = False` because Pod host keys change on redeploy. Both are deliberate trade-offs; use SSH keys only, and remove `22/tcp` from `ports` in `terraform/main.tf` once you no longer need verification or shell access.
@@ -132,20 +134,19 @@ The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID
 
 `docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
-`scripts/pod-start.sh` and `scripts/pod-stop.sh` call the REST v2 endpoint `POST /v2/pods/{id}/action` (`start`/`stop`); no `runpodctl` is needed, only `curl` and `python3`. Starting bills the GPU immediately. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
+`scripts/pod-start.sh` and `scripts/pod-stop.sh` call the REST v2 endpoint `POST /v2/pods/{id}/action` (`start`/`stop`); no `runpodctl` is needed, only `curl` and `python3`. Both first print the target (name, status, hourly cost) so a stale `RUNPOD_POD_ID` is visible, and do nothing if the Pod is already in the wanted state. Starting bills the GPU immediately. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
 
 ## If the GPU is occupied
 
 A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed. Observed on 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; nothing is started or billed in that case. RunPod's docs describe three options:
 
-1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/wait-for-gpu.sh B300 EU-NL-1` (use the datacenter of your volume) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything. Stock changes within minutes, so act right away and expect that a start can still fail.
+1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/wait-for-gpu.sh B300 EU-NL-1` (use the datacenter of your volume) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything (a typo in the GPU or datacenter aborts with exit 4 instead of polling forever). Stock changes within minutes, so act right away and expect that a start can still fail.
 2. **Redeploy (recommended with a Network Volume).** Terminate the Pod and create a new one that attaches the same volume; `/workspace` (model, HF and vLLM caches) is untouched. With `machine_id` unset, RunPod should choose any machine with a free B300 in the volume's datacenter (confirm this in the first plan/apply):
 
    ```bash
-   cd terraform
-   terraform state list                      # is runpod_pod.glm in the state?
-   terraform apply -replace=runpod_pod.glm   # yes: replace it
-   ../scripts/plan.sh && terraform apply tfplan   # no (e.g. the Pod was created outside Terraform): plain plan and apply
+   (cd terraform && terraform state list)    # is runpod_pod.glm in the state?
+   (cd terraform && terraform apply -replace=runpod_pod.glm)   # yes: replace it
+   ./scripts/plan.sh && (cd terraform && terraform apply tfplan)   # no (e.g. the Pod was created outside Terraform): plain plan and apply
    ```
 
    Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity.

@@ -10,7 +10,12 @@ set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ONLINE=0
-[ "${1:-}" = "--online" ] && ONLINE=1
+case "${1:-}" in
+  "") ;;
+  --online) ONLINE=1 ;;
+  *) echo "usage: pre-check.sh [--online]" >&2; exit 2 ;;
+esac
+[ "$#" -le 1 ] || { echo "usage: pre-check.sh [--online]" >&2; exit 2; }
 
 fails=0
 warns=0
@@ -75,14 +80,27 @@ fi
 echo
 echo "== Files =="
 tfvars="$ROOT/terraform/terraform.tfvars"
+# Terraform also accepts TF_VAR_* and *.auto.tfvars; only complain when nothing is set up.
+alt_source=0
+if [ -n "${TF_VAR_network_volume_id:-}" ] || compgen -G "$ROOT/terraform/*.auto.tfvars" >/dev/null; then
+  alt_source=1
+fi
 if [ ! -f "$tfvars" ]; then
-  fail "terraform/terraform.tfvars is missing (cp terraform.tfvars.example terraform.tfvars)"
-elif grep -v '^[[:space:]]*#' "$tfvars" | grep -q 'REPLACE_WITH'; then
-  fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
-elif ! grep -v '^[[:space:]]*#' "$tfvars" | grep -q '^[[:space:]]*network_volume_id[[:space:]]*='; then
-  fail "terraform/terraform.tfvars does not set network_volume_id"
+  if [ "$alt_source" -eq 1 ]; then
+    ok "no terraform.tfvars, but variables come from TF_VAR_* / *.auto.tfvars"
+  else
+    fail "terraform/terraform.tfvars is missing (cp terraform.tfvars.example terraform.tfvars)"
+  fi
 else
-  ok "terraform/terraform.tfvars present, no placeholders"
+  # Look at values only: drop full-line and trailing comments before checking.
+  values="$(sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$tfvars")"
+  if printf '%s\n' "$values" | grep -q 'REPLACE_WITH'; then
+    fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
+  elif ! printf '%s\n' "$values" | grep -q '^[[:space:]]*network_volume_id[[:space:]]*=' && [ "$alt_source" -eq 0 ]; then
+    warn "terraform/terraform.tfvars does not set network_volume_id (Terraform will ask for it)"
+  else
+    ok "terraform/terraform.tfvars present, no placeholders"
+  fi
 fi
 
 if [ -d "$ROOT/terraform/.terraform" ]; then
@@ -115,12 +133,12 @@ if [ "$ONLINE" -eq 1 ]; then
   else
     # shellcheck source=scripts/_api.sh
     source "$ROOT/scripts/_api.sh"
-    if api_get /pods >/dev/null 2>"${TMPDIR:-/tmp}/.pre-check.err.$$"; then
+    # api_get keeps no temp files; its error text goes to stderr and is captured here.
+    if err="$(api_get /pods 2>&1 >/dev/null)"; then
       ok "API reachable and key accepted (${BASE})"
     else
-      fail "API check failed: $(head -n1 "${TMPDIR:-/tmp}/.pre-check.err.$$")"
+      fail "API check failed: $(printf '%s' "$err" | head -n1)"
     fi
-    rm -f "${TMPDIR:-/tmp}/.pre-check.err.$$"
   fi
 fi
 

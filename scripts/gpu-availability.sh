@@ -8,8 +8,8 @@
 #                  otherwise every GPU containing the text matches
 #   DATACENTER_ID  only report this datacenter (e.g. the one your volume lives in)
 #
-# Exit codes: 0 = in stock (in the given datacenter, if any), 2 = not in stock or
-# no such GPU type, 1 = API/transport error.
+# Exit codes: 0 = in stock (in the given datacenter, if any), 2 = known GPU but no
+# stock, 4 = unknown GPU type or datacenter (typo?), 1 = API/transport error.
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 # shellcheck source=scripts/_api.sh
@@ -17,6 +17,20 @@ source "$(dirname "$0")/_api.sh"
 
 MATCH="${1:-B300}"
 DC="${2:-}"
+
+# A datacenter that does not exist would look like "no stock"; reject it as a typo.
+if [ -n "$DC" ]; then
+  dcs_response="$(api_get "/catalog/datacenters")"
+  printf '%s' "$dcs_response" | python3 -c '
+import json, sys
+dc = sys.argv[1].lower()
+data = json.load(sys.stdin)
+ids = sorted(d["id"] for d in (data.get("dataCenters") or []))
+if dc not in [i.lower() for i in ids]:
+    print("unknown datacenter %r. Known: %s" % (sys.argv[1], ", ".join(ids)), file=sys.stderr)
+    sys.exit(4)
+' "$DC" || exit $?
+fi
 
 # Capture first so an API failure is not followed by a JSON parse traceback.
 # Note: a GPU without stock is absent from the per-datacenter catalog, so the
@@ -30,12 +44,14 @@ data = json.load(sys.stdin)
 gpus = data.get("gpus", data) if isinstance(data, dict) else data
 exact = [g for g in gpus if match in (g["id"].lower(), g["name"].lower())]
 hits = exact or [g for g in gpus if match in g["id"].lower() or match in g["name"].lower()]
+if not exact and hits:
+    print("note: no exact GPU id/name %r; showing every GPU type containing it" % match, file=sys.stderr)
 if not hits:
-    print("no GPU type in the catalog matches %r" % match, file=sys.stderr)
-    sys.exit(2)
+    print("no GPU type in the catalog matches %r (typo?)" % match, file=sys.stderr)
+    sys.exit(4)
 in_stock = False
 for g in hits:
-    dcs = g.get("dataCenters", [])
+    dcs = g.get("dataCenters") or []
     if dc:
         sel = [d for d in dcs if d["id"].lower() == dc]
         avail = sel[0]["availability"] if sel else "NONE"
@@ -43,7 +59,7 @@ for g in hits:
     else:
         avail = g.get("availability", "NONE")
         where = "overall"
-    price = g.get("price", {}).get("secure")
+    price = (g.get("price") or {}).get("secure")
     print("%s (%s): %s %s%s" % (g["id"], g["name"], avail, where,
                                 "   secure $%s/h" % price if price is not None else ""))
     if avail != "NONE":

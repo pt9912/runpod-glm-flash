@@ -8,7 +8,8 @@
 #   defaults: B300, any datacenter, 60 s, 0 (= wait until Ctrl-C)
 # Example (your volume lives in EU-NL-1): wait-for-gpu.sh B300 EU-NL-1
 #
-# Exit codes: 0 = in stock, 3 = timeout, 1 = the API failed 5 times in a row.
+# Exit codes: 0 = in stock, 3 = timeout, 4 = unknown GPU type or datacenter (typo),
+# 1 = the API kept failing for 5 minutes (WAIT_MAX_ERROR_SECONDS), 2 = bad arguments.
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 
@@ -16,12 +17,13 @@ MATCH="${1:-B300}"
 DC="${2:-}"
 INTERVAL="${3:-60}"
 TIMEOUT="${4:-0}"
-case "$INTERVAL$TIMEOUT" in *[!0-9]*) echo "INTERVAL and TIMEOUT must be whole seconds" >&2; exit 2 ;; esac
-[ "$INTERVAL" -ge 10 ] || { echo "INTERVAL must be >= 10 s (API rate limit)" >&2; exit 2; }
+MAX_ERR="${WAIT_MAX_ERROR_SECONDS:-300}"
+case "$INTERVAL$TIMEOUT$MAX_ERR" in *[!0-9]*) echo "INTERVAL, TIMEOUT and WAIT_MAX_ERROR_SECONDS must be whole seconds" >&2; exit 2 ;; esac
+[ "$INTERVAL" -ge "${WAIT_MIN_INTERVAL:-10}" ] || { echo "INTERVAL must be >= 10 s (API rate limit)" >&2; exit 2; }
 
 HERE="$(dirname "$0")"
 start=$SECONDS
-errors=0
+first_error=""
 echo "Waiting for ${MATCH}${DC:+ in $DC} (every ${INTERVAL}s, timeout: $([ "$TIMEOUT" -gt 0 ] && echo "${TIMEOUT}s" || echo none)). Read-only, Ctrl-C to stop."
 
 while true; do
@@ -40,19 +42,32 @@ while true; do
       exit 0
       ;;
     2)
-      errors=0
+      first_error=""
       echo "[$now] no stock"
       ;;
+    4)
+      # Not "no stock": a typo would otherwise be polled forever.
+      printf '%s\n' "$out" >&2
+      exit 4
+      ;;
     *)
-      errors=$((errors + 1))
-      echo "[$now] API error ($errors/5): $(printf '%s' "$out" | head -n1)" >&2
-      [ "$errors" -lt 5 ] || exit 1
+      [ -n "$first_error" ] || first_error=$SECONDS
+      echo "[$now] API error: $(printf '%s' "$out" | head -n1)" >&2
+      if [ $((SECONDS - first_error)) -ge "$MAX_ERR" ]; then
+        echo "The API kept failing for ${MAX_ERR}s; giving up." >&2
+        exit 1
+      fi
       ;;
   esac
 
-  if [ "$TIMEOUT" -gt 0 ] && [ $((SECONDS - start)) -ge "$TIMEOUT" ]; then
-    echo "Timeout after ${TIMEOUT}s without stock." >&2
-    exit 3
+  nap="$INTERVAL"
+  if [ "$TIMEOUT" -gt 0 ]; then
+    remaining=$((TIMEOUT - (SECONDS - start)))
+    if [ "$remaining" -le 0 ]; then
+      echo "Timeout after ${TIMEOUT}s without stock." >&2
+      exit 3
+    fi
+    [ "$remaining" -ge "$nap" ] || nap="$remaining"
   fi
-  sleep "$INTERVAL"
+  sleep "$nap"
 done

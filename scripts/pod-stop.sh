@@ -5,6 +5,28 @@ set -euo pipefail
 # shellcheck source=scripts/_api.sh
 source "$(dirname "$0")/_api.sh"
 
+# Show which Pod this acts on (a stale RUNPOD_POD_ID would stop the wrong one).
+set +e
+info="$(api_pod_info "$RUNPOD_POD_ID" 2>&1)"
+rc=$?
+set -e
+if [ "$rc" -ne 0 ]; then
+  printf '%s\n' "$info" >&2
+  echo >&2
+  api_auth_hint "$info" && exit 1
+  case "$(printf '%s' "$info" | head -n1)" in
+    "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID." >&2 ;;
+    *) echo "Could not read Pod $RUNPOD_POD_ID; nothing was stopped." >&2 ;;
+  esac
+  exit 1
+fi
+IFS=$'\t' read -r name status cost <<<"$info"
+echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
+if [ "$status" = "EXITED" ]; then
+  echo "Already stopped; nothing to do."
+  exit 0
+fi
+
 # Stopping releases the GPU (billing stops) but keeps the Pod tied to its machine:
 # another user may rent the GPU meanwhile, see README "If the GPU is occupied".
 set +e
@@ -16,12 +38,8 @@ if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$out" >&2
   echo >&2
   api_auth_hint "$out" && exit 1
-  echo "pod stop failed for Pod $RUNPOD_POD_ID" >&2
+  echo "pod stop failed for Pod $RUNPOD_POD_ID (see the message above)." >&2
   exit 1
 fi
 
-printf '%s' "$out" | python3 -c '
-import json, sys
-p = json.load(sys.stdin)
-print("Pod %s: status=%s" % (p.get("id"), p.get("status")))
-'
+printf '%s' "$out" | api_print_pod
