@@ -32,7 +32,7 @@
   ansible.builtin.wait_for:
     host: 127.0.0.1
     port: 8000
-    timeout: 1800
+    timeout: 3600 # matches VLLM_ENGINE_READY_TIMEOUT_S in terraform/main.tf
 
 - name: Verify unauthenticated v1 request is rejected
   ansible.builtin.uri:

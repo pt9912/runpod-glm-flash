@@ -21,16 +21,19 @@ variable "gpu_type_id" {
 }
 
 variable "pod_name" {
-  type    = string
-  default = "glm-5.3-flash-b300"
+  description = "Name of the RunPod Pod."
+  type        = string
+  default     = "glm-5.3-flash-b300"
 }
 
 variable "hf_secret_name" {
-  type    = string
-  default = "HF_TOKEN"
+  description = "Name of the RunPod Secret holding the Hugging Face token (created in the console; case-sensitive)."
+  type        = string
+  default     = "HF_TOKEN"
 }
 
 variable "vllm_secret_name" {
-  type    = string
-  default = "VLLM_API_KEY"
+  description = "Name of the RunPod Secret holding the vLLM API key (created in the console; case-sensitive)."
+  type        = string
+  default     = "VLLM_API_KEY"
 }

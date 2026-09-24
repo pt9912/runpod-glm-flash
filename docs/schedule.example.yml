@@ -1,4 +1,5 @@
-# Example only. Rename to schedule.yml only after reviewing times and adding secrets.
+# Example only. Deliberately kept outside .github/workflows/ so GitHub does not run it.
+# Move it to .github/workflows/schedule.yml only after reviewing times and adding secrets.
 # GitHub Actions cron is UTC. 13/5 example below corresponds to 07:00-20:00 CEST;
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
 name: RunPod GLM 13x5

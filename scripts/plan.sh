@@ -5,4 +5,4 @@ cd "$(dirname "$0")/../terraform"
 terraform init
 terraform fmt -check
 terraform validate
-terraform plan
+terraform plan -out=tfplan

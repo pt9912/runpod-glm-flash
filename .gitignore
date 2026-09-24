@@ -5,10 +5,13 @@
 terraform.tfvars
 *.auto.tfvars
 crash.log
+tfplan
+*.tfplan
 
 # Secrets / environment
 .env
 .env.*
+.envrc
 *.pem
 *.key
 *.vault
@@ -18,6 +21,7 @@ secrets.yml
 # Local Ansible inventory
 ansible/inventory.yml
 ansible/inventory.local.yml
+ansible/*.retry
 
 # Editor / OS
 .vscode/

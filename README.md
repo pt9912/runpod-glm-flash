@@ -62,12 +62,12 @@ Set the existing Network Volume ID and a currently valid Secure Cloud B300 machi
 ../scripts/plan.sh
 ```
 
-Review the entire plan. Check Secure Cloud, B300, one GPU, 50 GB container disk, existing `/workspace` Network Volume, image, 1M/MTP5 args, port 8000 and that no literal secrets appear.
+The plan is saved to `terraform/tfplan`, so the reviewed plan is exactly what gets applied. Review the entire plan. Check Secure Cloud, B300, one GPU, 50 GB container disk, existing `/workspace` Network Volume, image, 1M/MTP5 args, port 8000 and that no literal secrets appear.
 
 ## 4. Apply intentionally
 
 ```bash
-terraform apply
+terraform apply tfplan   # run from terraform/
 ```
 
 This is the first step that can start billable B300 compute. There is intentionally no automatic apply script.
@@ -85,7 +85,7 @@ The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID
 
 ## 13/5 scheduling
 
-`.github/workflows/schedule.example.yml` is deliberately **disabled**. It documents the intended GitHub Actions shape without risking accidental GPU spend. Rename/enable it only after pinning a reviewed `runpodctl` version and deciding how to handle European DST.
+`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning a reviewed `runpodctl` version and deciding how to handle European DST.
 
 RunPod currently exposes `pod start` and `pod stop` via `runpodctl`. If a stopped Pod's old GPU is occupied, a Network Volume lets you redeploy without losing `/workspace`. Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
 
