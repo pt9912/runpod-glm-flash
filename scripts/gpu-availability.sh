@@ -14,12 +14,15 @@ source "$(dirname "$0")/_api.sh"
 MATCH="${1:-B300}"
 DC="${2:-}"
 
-api_get "/catalog/datacenters?include=GPU_AVAILABILITY" | python3 -c '
+# Capture first so an API failure is not followed by a JSON parse traceback.
+response="$(api_get "/catalog/datacenters?include=GPU_AVAILABILITY")"
+
+printf '%s' "$response" | python3 -c '
 import json, sys
-match, dc = sys.argv[1].lower(), sys.argv[2]
+match, dc = sys.argv[1].lower(), sys.argv[2].lower()
 rows = []
 for d in json.load(sys.stdin)["dataCenters"]:
-    if dc and d["id"] != dc:
+    if dc and d["id"].lower() != dc:
         continue
     for g in d.get("gpuAvailability", []):
         if match in g["id"].lower() or match in g["name"].lower():

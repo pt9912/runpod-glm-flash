@@ -57,8 +57,11 @@
 
 - name: Assert API key exists
   ansible.builtin.assert:
-    that: vllm_key.stdout | length > 0
-    fail_msg: VLLM_API_KEY is empty; the public API may be unprotected
+    that:
+      - vllm_key.stdout | length > 0
+      # An unresolved RunPod Secret placeholder would be a non-empty, guessable key.
+      - "'RUNPOD_SECRET_' not in vllm_key.stdout"
+    fail_msg: VLLM_API_KEY is empty or an unresolved RunPod Secret placeholder; the public API may be unprotected or use a guessable key
   no_log: true
 
 - name: Query authenticated model endpoint

@@ -35,6 +35,8 @@ jobs:
       RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
       ACTION: ${{ inputs.action }}
     steps:
+      # When enabling: pin actions by commit SHA. Also verify that the pinned runpodctl
+      # reads RUNPOD_API_KEY from the environment (not confirmed in the docs).
       - uses: actions/checkout@v4
       - name: Guard
         run: |

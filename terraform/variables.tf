@@ -10,14 +10,16 @@ variable "machine_id" {
   default     = null
 
   validation {
-    condition     = var.machine_id == null || !startswith(coalesce(var.machine_id, ""), "REPLACE_WITH")
-    error_message = "machine_id still contains the template placeholder. Set a real ID or leave it unset (null)."
+    # try(): null is allowed; an empty string or the template placeholder is not.
+    condition     = try(length(trimspace(var.machine_id)) > 0 && !startswith(var.machine_id, "REPLACE_WITH"), true)
+    error_message = "machine_id is empty or still the template placeholder. Set a real ID or leave it unset (null)."
   }
 }
 
 variable "network_volume_id" {
   description = "Existing persistent Network Volume containing /workspace/huggingface and /workspace/vllm-cache. Volumes are bound to one datacenter; machine_id must be located there."
   type        = string
+  nullable    = false
 
   validation {
     condition     = length(trimspace(var.network_volume_id)) > 0 && !startswith(var.network_volume_id, "REPLACE_WITH")
