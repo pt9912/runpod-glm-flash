@@ -140,7 +140,7 @@ For the 13/5 schedule this means: stop/start is cheap but can fail overnight; te
 
 ## Stop billing
 
-- `pod-stop.sh` stops the GPU, but a stopped Pod still bills its container disk, and the Network Volume bills separately.
+- `pod-stop.sh` stops the GPU billing. Per RunPod's pricing docs a stopped Pod is not charged for its container disk (only for a Pod-local volume disk, at a higher rate); the Network Volume bills separately (about $0.07/GB/month) whether or not a Pod runs.
 - `terraform destroy` (from `terraform/`) terminates the Pod and removes it from state. It does **not** delete the Network Volume, which is not managed here, so the model and caches survive.
 - `terraform apply -replace=runpod_pod.glm` destroys first and then creates: if B300 capacity is missing at that moment, you end up with no Pod.
 
