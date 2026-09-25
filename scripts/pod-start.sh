@@ -22,7 +22,8 @@ if [ "$rc" -ne 0 ]; then
 fi
 IFS=$'\t' read -r name status cost <<<"$info"
 echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
-case "$status" in
+status_uc="$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')"
+case "$status_uc" in
   RUNNING|STARTING|PROVISIONING)
     echo "Already $status; nothing to do."
     exit 0
@@ -52,8 +53,8 @@ if [ "$rc" -ne 0 ]; then
 The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed).
 Options: wait and retry, or redeploy with the same volume; see README "If the GPU is occupied":
   - poll the stock: scripts/wait-for-gpu.sh B300 <DATACENTER OF YOUR VOLUME>
-  - redeploy: terraform apply -replace=runpod_pod.glm if the Pod is in the Terraform state,
-    otherwise scripts/plan.sh and terraform apply tfplan
+  - redeploy: (cd terraform && terraform apply -replace=runpod_pod.glm) if the Pod is in the Terraform
+    state, otherwise scripts/plan.sh and (cd terraform && terraform apply tfplan)
 A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
 HINT
       else
@@ -62,7 +63,8 @@ HINT
       ;;
     "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID." >&2 ;;
     "HTTP 409"*) echo "The Pod's current status ($status) does not allow 'start' (it may already be running)." >&2 ;;
-    *) echo "pod start failed for Pod $RUNPOD_POD_ID (see the message above)." >&2 ;;
+    "HTTP "*) echo "pod start failed for Pod $RUNPOD_POD_ID (see the message above)." >&2 ;;
+    *) echo "The connection failed while the start request may already have been sent: the outcome is UNKNOWN and the Pod may be starting (and billing). Check before retrying: scripts/v2-smoke.sh" >&2 ;;
   esac
   exit 1
 fi

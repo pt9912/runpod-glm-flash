@@ -8,6 +8,7 @@ override.tf
 override.tf.json
 .terraform.tfstate.lock.info
 crash.log
+.startup-times.log
 tfplan
 *.tfplan
 

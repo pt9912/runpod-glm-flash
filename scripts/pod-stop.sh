@@ -22,7 +22,8 @@ if [ "$rc" -ne 0 ]; then
 fi
 IFS=$'\t' read -r name status cost <<<"$info"
 echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
-if [ "$status" = "EXITED" ]; then
+status_uc="$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')"
+if [ "$status_uc" = "EXITED" ]; then
   echo "Already stopped; nothing to do."
   exit 0
 fi
@@ -38,7 +39,10 @@ if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$out" >&2
   echo >&2
   api_auth_hint "$out" && exit 1
-  echo "pod stop failed for Pod $RUNPOD_POD_ID (see the message above)." >&2
+  case "$(printf '%s' "$out" | head -n1)" in
+    "HTTP "*) echo "pod stop failed for Pod $RUNPOD_POD_ID (see the message above)." >&2 ;;
+    *) echo "The connection failed while the stop request may already have been sent: the outcome is UNKNOWN. Check the status before retrying: scripts/v2-smoke.sh" >&2 ;;
+  esac
   exit 1
 fi
 

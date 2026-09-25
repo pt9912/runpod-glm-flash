@@ -144,6 +144,8 @@ GitHub Actions cron runs in UTC only, so the cron lines must be changed twice a 
 
 `docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
+All API calls time out (10 s connect, 60 s total; override with `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), so a stalled connection cannot hang a scheduled job. If the connection breaks after a start/stop request was sent, the scripts say the outcome is unknown; check with `scripts/v2-smoke.sh` before retrying.
+
 `scripts/pod-start.sh` and `scripts/pod-stop.sh` call the REST v2 endpoint `POST /v2/pods/{id}/action` (`start`/`stop`); no `runpodctl` is needed, only `curl` and `python3`. Both first print the target (name, status, hourly cost) so a stale `RUNPOD_POD_ID` is visible, and do nothing if the Pod is already in the wanted state. Starting bills the GPU immediately. Stopping is risky for a scheduled setup: see "If the GPU is occupied". Do not automate destructive redeploy until the exact migration/redeploy behavior has been tested on the account.
 
 ## If the GPU is occupied
@@ -214,7 +216,7 @@ export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576
 claude --model glm-5.3-flash
 ```
 
-`VLLM_API_KEY` here is the client-side copy of the same value as the RunPod Secret (see `.env.example`). Whether this vLLM image serves the Anthropic-style `/v1/messages` API is not verified. The RunPod HTTP proxy closes connections after 100 seconds (HTTP 524), so use streaming clients; a slow first token with a very long context can otherwise hit that limit.
+`VLLM_API_KEY` here is the client-side copy of the same value as the RunPod Secret (see `.env.example`). The vLLM image serves the Anthropic-style `/v1/messages` and `/v1/messages/count_tokens` endpoints (verified by the owner, including a tool-use round trip). The RunPod HTTP proxy closes connections after 100 seconds (HTTP 524), so use streaming clients; a slow first token with a very long context can otherwise hit that limit.
 
 ## vLLM concurrency note
 
@@ -225,3 +227,22 @@ claude --model glm-5.3-flash
 Keep `--gpu-memory-utilization 0.96` with MTP5. Do not reuse a fixed KV-cache byte value measured without MTP.
 
 `HF_HUB_OFFLINE=1` (default, `offline_mode = true`) assumes the complete checkpoint is already on the persistent Network Volume.
+
+## Startup times
+
+Values measured by the owner on the validated deployment (B300, `--safetensors-load-strategy prefetch`, checkpoint already on the Network Volume). They are not produced by this repo's scripts:
+
+| Phase | Time |
+|---|---|
+| Model loading without `prefetch` | about 1128 s (18:48 min) |
+| Model loading with `prefetch` | about 216 s (3:36 min); the full prefetch took about 233 s |
+| FlashInfer autotune | about 3 min, only on the first run; the result is cached under `/workspace/vllm-cache` |
+
+The total time from Pod start to the first successful `/v1/models` is **not measured yet**; it adds container start, compilation and warm-up to the loading time. Measure it with:
+
+```bash
+set -a; source .env; set +a
+./scripts/pod-start.sh && ./scripts/wait-for-ready.sh
+```
+
+`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.

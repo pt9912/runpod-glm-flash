@@ -9,7 +9,8 @@
 # Example (your volume lives in EU-NL-1): wait-for-gpu.sh B300 EU-NL-1
 #
 # Exit codes: 0 = in stock, 3 = timeout, 4 = unknown GPU type or datacenter (typo),
-# 1 = the API kept failing for 5 minutes (WAIT_MAX_ERROR_SECONDS), 2 = bad arguments.
+# 1 = the API kept failing for 5 minutes (WAIT_MAX_ERROR_SECONDS) or the key was rejected (401/403),
+# 2 = bad arguments.
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 
@@ -21,7 +22,10 @@ MAX_ERR="${WAIT_MAX_ERROR_SECONDS:-300}"
 case "$INTERVAL$TIMEOUT$MAX_ERR" in *[!0-9]*) echo "INTERVAL, TIMEOUT and WAIT_MAX_ERROR_SECONDS must be whole seconds" >&2; exit 2 ;; esac
 [ "$INTERVAL" -ge "${WAIT_MIN_INTERVAL:-10}" ] || { echo "INTERVAL must be >= 10 s (API rate limit)" >&2; exit 2; }
 
+INTERVAL=$((10#$INTERVAL)); TIMEOUT=$((10#$TIMEOUT)); MAX_ERR=$((10#$MAX_ERR))   # "08" is decimal, not invalid octal
 HERE="$(dirname "$0")"
+# shellcheck source=scripts/_api.sh
+source "$HERE/_api.sh"   # for api_auth_hint
 start=$SECONDS
 first_error=""
 echo "Waiting for ${MATCH}${DC:+ in $DC} (every ${INTERVAL}s, timeout: $([ "$TIMEOUT" -gt 0 ] && echo "${TIMEOUT}s" || echo none)). Read-only, Ctrl-C to stop."
@@ -38,7 +42,7 @@ while true; do
       printf '\a'
       echo "[$now] IN STOCK:"
       printf '%s\n' "$out"
-      echo "Next: scripts/pod-start.sh (restart the stopped Pod) or scripts/plan.sh + terraform apply tfplan."
+      echo "Next: scripts/pod-start.sh (restart the stopped Pod) or scripts/plan.sh and (cd terraform && terraform apply tfplan)."
       exit 0
       ;;
     2)
@@ -51,6 +55,14 @@ while true; do
       exit 4
       ;;
     *)
+      # A rejected or unauthorised key will not fix itself: stop at once.
+      case "$(printf '%s' "$out" | head -n1)" in
+        "HTTP 401"*|"HTTP 403"*)
+          printf '%s\n' "$out" >&2
+          api_auth_hint "$out" || true
+          exit 1
+          ;;
+      esac
       [ -n "$first_error" ] || first_error=$SECONDS
       echo "[$now] API error: $(printf '%s' "$out" | head -n1)" >&2
       if [ $((SECONDS - first_error)) -ge "$MAX_ERR" ]; then

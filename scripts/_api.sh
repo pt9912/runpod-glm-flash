@@ -9,7 +9,8 @@ BASE="${RUNPOD_BASE_URL:-https://api.runpod.io/v2}"
 # No temp file is used, so nothing can be left behind on Ctrl-C.
 _api_request() {
   local method="$1" path="$2" data="${3:-}" resp code body
-  local -a args=(-sS -w $'\n%{http_code}' -X "$method")
+  # Timeouts: a stalled connection must not hang pod-start/stop or a scheduled job.
+  local -a args=(-sS --connect-timeout "${API_CONNECT_TIMEOUT:-10}" --max-time "${API_MAX_TIME:-60}" -w $'\n%{http_code}' -X "$method")
   if [ -n "$data" ]; then
     args+=(-H 'Content-Type: application/json' -d "$data")
   fi
@@ -21,11 +22,14 @@ EOT
   fi
   code="${resp##*$'\n'}"
   body="${resp%$'\n'*}"
-  if [ "$code" -lt 200 ] || [ "$code" -ge 300 ]; then
-    echo "HTTP $code from ${method} ${BASE%/}${path}" >&2
-    printf '%s\n' "$body" >&2
-    return 1
-  fi
+  case "$code" in
+    2??) ;;
+    *)
+      echo "HTTP ${code:-?} from ${method} ${BASE%/}${path}" >&2
+      printf '%s\n' "$body" >&2
+      return 1
+      ;;
+  esac
   printf '%s' "$body"
 }
 
@@ -59,7 +63,7 @@ MSG
 
 # api_pod_info ID: GET the Pod and print "name<TAB>status<TAB>cost" (non-sensitive
 # fields only; the Pod object also contains env). Fields missing in the response
-# are printed as "?". Returns 1 (message on stderr) if the GET fails.
+# (or empty ones) are printed as "?". Returns 1 (message on stderr) if the GET fails.
 api_pod_info() {
   local resp
   resp="$(api_get "/pods/$1")" || return 1
@@ -71,7 +75,11 @@ except Exception:
     p = {}
 if not isinstance(p, dict):
     p = {}
-print("\t".join(str(p.get(k, "?")) for k in ("name", "status", "cost")))
+def field(k):
+    # No empty fields and no tabs/newlines: the caller splits on tabs.
+    v = " ".join(str(p.get(k, "")).split())[:80]
+    return v or "?"
+print("\t".join(field(k) for k in ("name", "status", "cost")))
 '
 }
 
