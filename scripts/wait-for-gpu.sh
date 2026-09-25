@@ -20,7 +20,8 @@ INTERVAL="${3:-60}"
 TIMEOUT="${4:-0}"
 MAX_ERR="${WAIT_MAX_ERROR_SECONDS:-300}"
 case "$INTERVAL$TIMEOUT$MAX_ERR" in *[!0-9]*) echo "INTERVAL, TIMEOUT and WAIT_MAX_ERROR_SECONDS must be whole seconds" >&2; exit 2 ;; esac
-[ "$INTERVAL" -ge "${WAIT_MIN_INTERVAL:-10}" ] || { echo "INTERVAL must be >= 10 s (API rate limit)" >&2; exit 2; }
+[ "${#INTERVAL}" -le 9 ] && [ "${#TIMEOUT}" -le 9 ] && [ "${#MAX_ERR}" -le 9 ] || { echo "numeric values must have at most 9 digits" >&2; exit 2; }
+[ "$((10#$INTERVAL))" -ge "${WAIT_MIN_INTERVAL:-10}" ] || { echo "INTERVAL must be >= 10 s (API rate limit)" >&2; exit 2; }
 
 INTERVAL=$((10#$INTERVAL)); TIMEOUT=$((10#$TIMEOUT)); MAX_ERR=$((10#$MAX_ERR))   # "08" is decimal, not invalid octal
 HERE="$(dirname "$0")"

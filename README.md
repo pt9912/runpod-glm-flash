@@ -142,7 +142,7 @@ The intended schedule is **05:00 to 19:00 local time, Monday to Friday** (14 hou
 GitHub Actions cron runs in UTC only, so the cron lines must be changed twice a year (last Sunday of March and October), or you use a timezone-aware external scheduler.
 
 
-`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
+`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend: the start job runs `scripts/start-when-free.sh`, which retries `pod-start.sh` every 60 s for at most `MAX_WAIT_SECONDS` (7200 = 2 h) while the Pod's GPU is occupied, then gives up and fails the job (the Pod stays stopped that day; GitHub usually, not reliably, notifies you); the job has a hard `timeout-minutes` cap; the stop job runs `pod-stop.sh`; scheduled runs derive start/stop from the cron entry. The API key secret needs write access to Pods. **Every successful start bills the GPU**, so review the file before enabling it. GitHub only keeps one pending run per concurrency group: do not dispatch manual runs while a start is still retrying, or a queued stop can be dropped. Cron runs can be delayed or dropped, and scheduled workflows of inactive public repos are disabled after 60 days, both relevant for the stop job. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
 All API calls time out (10 s connect, 60 s total; override with `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), so a stalled connection cannot hang a scheduled job. If the connection breaks after a start/stop request was sent, the scripts say the outcome is unknown; check with `scripts/v2-smoke.sh` before retrying.
 
@@ -152,7 +152,7 @@ All API calls time out (10 s connect, 60 s total; override with `API_CONNECT_TIM
 
 A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed. Observed on 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; nothing is started or billed in that case. RunPod's docs describe three options:
 
-1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/wait-for-gpu.sh B300 EU-NL-1` (use the datacenter of your volume) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything (a typo in the GPU or datacenter aborts with exit 4 instead of polling forever). Stock changes within minutes, so act right away and expect that a start can still fail.
+1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/start-when-free.sh [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (defaults 7200 s, 60 s) retries the actual start while the GPU is occupied and stops after one success or at the cap. That is the right tool for a stopped Pod: it resumes on its own machine, which the catalog stock says nothing about, and a failed attempt costs nothing. `pod-start.sh` returns exit code 5 for "GPU occupied" and 6 for "Pod could not be read, nothing sent" (retried up to 10 times in a row); any other failure aborts at once so a possibly started Pod is never started twice. Cancelling the run stops the running attempt, but a start request that was already sent cannot be undone (the script then says to check `scripts/v2-smoke.sh`). **A successful start bills the GPU.** If you only want to be notified, not to start, `./scripts/wait-for-gpu.sh B300 EU-NL-1` (use the datacenter of your volume) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything (a typo in the GPU or datacenter aborts with exit 4 instead of polling forever). Stock changes within minutes, so act right away and expect that a start can still fail.
 2. **Redeploy (recommended with a Network Volume).** Terminate the Pod and create a new one that attaches the same volume; `/workspace` (model, HF and vLLM caches) is untouched. With `machine_id` unset, RunPod should choose any machine with a free B300 in the volume's datacenter (confirm this in the first plan/apply):
 
    ```bash
@@ -168,7 +168,7 @@ After `pod-stop.sh` the Pod is `EXITED` while Terraform's state still says runni
 
 Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run the Ansible verification. Terraform state follows a redeploy via `-replace`, but not a console migration; after a migration the old resource is stale.
 
-For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the 05:00 start fails because the GPU is taken, `scripts/wait-for-gpu.sh B300 <DATACENTER> 60 7200` polls for up to two hours before you decide what to do; it never starts anything by itself.
+For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the GPU is taken at 05:00, the start is retried (see below) for at most two hours; if it stays taken, the day is skipped (no attempt begins after the cap; one already running can finish about 2 minutes later).
 
 ## Stop billing
 
@@ -246,3 +246,7 @@ set -a; source .env; set +a
 ```
 
 `wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The license covers the code and documentation in this repository only, not RunPod, the model or the vLLM image, which have their own terms.

@@ -22,6 +22,7 @@ set -euo pipefail
 TIMEOUT="${1:-3600}"
 INTERVAL="${2:-15}"
 case "$TIMEOUT$INTERVAL" in *[!0-9]*) echo "TIMEOUT and INTERVAL must be whole seconds" >&2; exit 2 ;; esac
+[ "${#TIMEOUT}" -le 9 ] && [ "${#INTERVAL}" -le 9 ] || { echo "TIMEOUT and INTERVAL must have at most 9 digits" >&2; exit 2; }
 TIMEOUT=$((10#$TIMEOUT)); INTERVAL=$((10#$INTERVAL))   # "08" is decimal, not invalid octal
 [ "$INTERVAL" -ge "${READY_MIN_INTERVAL:-5}" ] || { echo "INTERVAL must be >= 5 s" >&2; exit 2; }
 
