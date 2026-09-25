@@ -1,11 +1,12 @@
 # Example only. Deliberately kept outside .github/workflows/ so GitHub does not run it.
 # Move it to .github/workflows/schedule.yml only after reviewing times and adding secrets.
-# GitHub Actions cron is UTC. The 13/5 example below is 07:00-20:00 local time:
-#   summer (CEST, UTC+2): start 05:00 UTC, stop 18:00 UTC
-#   winter (CET,  UTC+1): start 06:00 UTC, stop 19:00 UTC
+# GitHub Actions cron is UTC. The 14/5 example below is 05:00-19:00 local time, Mon-Fri
+# (early start on purpose: a free B300 is easier to find in the early morning):
+#   summer (CEST, UTC+2): start 03:00 UTC, stop 17:00 UTC
+#   winter (CET,  UTC+1): start 04:00 UTC, stop 18:00 UTC
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
 # Note: scheduled runs have no `inputs.action`; map github.event.schedule to start/stop before enabling.
-name: RunPod GLM 13x5
+name: RunPod GLM 14x5
 
 on:
   workflow_dispatch:
@@ -16,8 +17,8 @@ on:
         type: choice
         options: [start, stop]
   # schedule:
-  #   - cron: '0 5 * * 1-5'   # start 07:00 CEST (summer; see header for winter)
-  #   - cron: '0 18 * * 1-5'  # stop  20:00 CEST (UTC cron)
+  #   - cron: '0 3 * * 1-5'   # start 05:00 CEST (summer; winter: '0 4 * * 1-5')
+  #   - cron: '0 17 * * 1-5'  # stop  19:00 CEST (summer; winter: '0 18 * * 1-5')
 
 permissions:
   contents: read

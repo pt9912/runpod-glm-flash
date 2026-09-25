@@ -130,7 +130,17 @@ The role reads `VLLM_API_KEY` from the shell environment and falls back to `/pro
 
 The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID and 1M max context. It also fails if `VLLM_API_KEY` is empty or still an unresolved `RUNPOD_SECRET_...` placeholder (e.g. after a mistyped secret name), because the API would otherwise run with a guessable key.
 
-## 13/5 scheduling
+## 14/5 scheduling
+
+The intended schedule is **05:00 to 19:00 local time, Monday to Friday** (14 hours, 5 days). The early start is deliberate: the owner's experience is that a free B300 is easier to find early in the morning (not verified here; stock changes within minutes, check with `scripts/gpu-availability.sh` or `scripts/wait-for-gpu.sh`).
+
+| | start 05:00 | stop 19:00 |
+|---|---|---|
+| summer time (CEST, UTC+2) | 03:00 UTC | 17:00 UTC |
+| winter time (CET, UTC+1) | 04:00 UTC | 18:00 UTC |
+
+GitHub Actions cron runs in UTC only, so the cron lines must be changed twice a year (last Sunday of March and October), or you use a timezone-aware external scheduler.
+
 
 `docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
@@ -156,7 +166,7 @@ After `pod-stop.sh` the Pod is `EXITED` while Terraform's state still says runni
 
 Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run the Ansible verification. Terraform state follows a redeploy via `-replace`, but not a console migration; after a migration the old resource is stale.
 
-For the 13/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately.
+For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the 05:00 start fails because the GPU is taken, `scripts/wait-for-gpu.sh B300 <DATACENTER> 60 7200` polls for up to two hours before you decide what to do; it never starts anything by itself.
 
 ## Stop billing
 
