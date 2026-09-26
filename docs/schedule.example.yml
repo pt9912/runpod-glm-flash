@@ -5,8 +5,9 @@
 #   summer (CEST, UTC+2): start 03:00 UTC, stop 17:00 UTC
 #   winter (CET,  UTC+1): start 04:00 UTC, stop 18:00 UTC
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
-# The start job retries scripts/pod-start.sh while the Pod's GPU is occupied (up to MAX_WAIT_SECONDS,
-# see scripts/start-when-free.sh); a failed attempt costs nothing. Every successful start bills the
+# The start job runs scripts/start-any.sh: it restarts the pool Pods one after the other and creates a new
+# one if none can start (up to MAX_WAIT_SECONDS); a failed attempt costs nothing. The stop job runs
+# scripts/stop-any.sh. The pool is every Pod whose name starts with glm-5.3-flash-b300, read live. Every successful start bills the
 # GPU (B300: about $7.89/h), so review this file carefully before enabling it. If the GPU stays
 # occupied, the job fails and the Pod stays stopped for that day. No start attempt begins after
 # MAX_WAIT_SECONDS (an attempt already running can finish about 2 minutes later).
@@ -54,10 +55,10 @@ jobs:
       - name: Guard
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}   # needs write access to Pods
-          RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
+          NETWORK_VOLUME_ID: ${{ secrets.NETWORK_VOLUME_ID }}   # needed to create new Pods
         run: |
           test -n "$RUNPOD_API_KEY"
-          test -n "$RUNPOD_POD_ID"
+          test -n "$NETWORK_VOLUME_ID"
       - name: Decide action
         id: act
         run: |
@@ -79,11 +80,10 @@ jobs:
         if: steps.act.outputs.action == 'start'
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-          RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
-        run: scripts/start-when-free.sh "$MAX_WAIT_SECONDS" 60
+          NETWORK_VOLUME_ID: ${{ secrets.NETWORK_VOLUME_ID }}
+        run: scripts/start-any.sh "$MAX_WAIT_SECONDS" 60
       - name: Stop
         if: steps.act.outputs.action == 'stop'
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-          RUNPOD_POD_ID: ${{ secrets.RUNPOD_POD_ID }}
-        run: scripts/pod-stop.sh
+        run: scripts/stop-any.sh

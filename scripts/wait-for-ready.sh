@@ -13,8 +13,8 @@
 #
 # The clock starts at the Pod's `startedAt` from the API (needs RUNPOD_API_KEY and a Pod ID:
 # the one in the proxy URL, or RUNPOD_POD_ID), so the result does not depend on when this
-# script was launched; this assumes the API updates startedAt on every start, and that your
-# local clock is accurate. Without that, the clock starts when this script starts (then run it
+# script was launched. The API did update startedAt on a restart when this was measured
+# (2026-09-26); your local clock must be accurate. Without that, the clock starts when this script starts (then run it
 # together with the Pod). The resolution is the polling interval (default 15 s).
 # If the Pod already answers on the first poll, nothing is logged (it was already running).
 # Every answer except 200 and 401/403 counts as "not ready yet" (e.g. 502/524 from the

@@ -143,7 +143,7 @@ The intended schedule is **05:00 to 19:00 local time, Monday to Friday** (14 hou
 
 GitHub Actions cron runs in UTC only, so the cron lines must be changed twice a year (last Sunday of March and October), or you use a timezone-aware external scheduler.
 
-`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend: the start job runs `scripts/start-when-free.sh`, which retries `pod-start.sh` every 60 s for at most `MAX_WAIT_SECONDS` (7200 = 2 h) while the Pod's GPU is occupied, then gives up and fails the job (the Pod stays stopped that day; GitHub usually, not reliably, notifies you); the job has a hard `timeout-minutes` cap; the stop job runs `pod-stop.sh`; scheduled runs derive start/stop from the cron entry. The API key secret needs write access to Pods. **Every successful start bills the GPU**, so review the file before enabling it. GitHub only keeps one pending run per concurrency group: do not dispatch manual runs while a start is still retrying, or a queued stop can be dropped. Cron runs can be delayed or dropped, and scheduled workflows of inactive public repos are disabled after 60 days, both relevant for the stop job. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
+`docs/schedule.example.yml` is deliberately **disabled** and kept outside `.github/workflows/`, so GitHub never runs it. It documents the intended GitHub Actions shape without risking accidental GPU spend: the start job runs `scripts/start-any.sh`, which restarts the pool Pods one after the other and creates a new one if none can start, repeating every 60 s for at most `MAX_WAIT_SECONDS` (7200 = 2 h), then gives up and fails the job (the Pod stays stopped that day; GitHub usually, not reliably, notifies you); the job has a hard `timeout-minutes` cap; the stop job runs `scripts/stop-any.sh`; scheduled runs derive start/stop from the cron entry. The secrets are `RUNPOD_API_KEY` (write access to Pods) and `NETWORK_VOLUME_ID` (needed to create new Pods). **Every successful start bills the GPU**, so review the file before enabling it. GitHub only keeps one pending run per concurrency group: do not dispatch manual runs while a start is still retrying, or a queued stop can be dropped. Cron runs can be delayed or dropped, and scheduled workflows of inactive public repos are disabled after 60 days, both relevant for the stop job. Move it to `.github/workflows/` and enable it only after pinning actions by SHA and deciding how to handle European DST.
 
 All API calls time out (10 s connect, 60 s total; override with `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), so a stalled connection cannot hang a scheduled job. If the connection breaks after a start/stop request was sent, the scripts say the outcome is unknown; check with `scripts/v2-smoke.sh` before retrying.
 
@@ -168,9 +168,32 @@ Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwar
 
 For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the GPU is taken at 05:00, the start is retried (see "Wait" above) for at most two hours; if it stays taken, the day is skipped (no attempt begins after the cap; one already running can finish about 2 minutes later).
 
+## Pod pool: several Pods on different machines
+
+A stopped Pod resumes only on its own machine (see above). Keeping several Pods, each on a different machine, gives more chances that one of them can start, and a restart is faster than a new Pod (5:56 min against 10:09 min, measured). A stopped Pod costs nothing per hour and the Network Volume is shared and billed once; whether RunPod limits the number of Pods per account was not checked.
+
+**The pool is not stored anywhere.** It is every Pod of your account whose name **starts with** `glm-5.3-flash-b300` (`POOL_PREFIX`), read live on every call and ignoring terminated ones. No Pod IDs are written into the repository or into `.env`, and Pods with other names are never touched.
+
+```bash
+./scripts/start-any.sh --dry-run    # show the pool, the order and the next name; sends nothing
+./scripts/start-any.sh --wait       # get one Pod running, then measure the time to ready
+./scripts/stop-any.sh               # stop the running pool Pod (ends the GPU billing)
+```
+
+`start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (defaults 1200 s and 30 s, interval at least 30 s) works in rounds:
+
+1. If a pool Pod is already `RUNNING`, `STARTING` or `PROVISIONING`, it does nothing: **never two pool Pods at once** (they share `/workspace/vllm-cache` and would bill twice).
+2. It tries to start the stopped pool Pods one after the other, the most recently used first. A try on an occupied machine costs nothing.
+3. If none can start and the pool has fewer than `POOL_MAX` Pods (default 6), it creates a new Pod like `create-pod.sh --yes`, named `glm-5.3-flash-b300`, `glm-5.3-flash-b300-2`, and so on (`--no-create` turns this off), and verifies it with `verify-pod.sh`.
+4. Otherwise it waits and repeats. No attempt begins after `MAX_WAIT_SECONDS` (exit code 3); an attempt already running can end about two minutes later.
+
+Only "machine occupied" (`pod-start.sh` exit 5), "no capacity" (`create-pod.sh` exit 5) and a temporarily unreadable Pod are retried. Every other failure stops at once, so a Pod that may have been started or created is never retried. If a created Pod fails verification, the script stops, says the Pod is billing and names the command to terminate it. Cancelling stops the running attempt, but a request that was already sent cannot be undone. **A success bills the GPU (about $7.89/h).**
+
+The script prints the ID and URL of the running Pod (`RUNPOD_POD_ID`, `GLM_URL`). With a pool, the ID in `.env` no longer has to name the running Pod; `--wait` uses the right one automatically. Remove Pods you no longer need with `pod-terminate.sh` (the volume stays); a full pool creates no new Pod. Exit codes: 0 a pool Pod is running, 3 gave up, 130 interrupted, 2 bad arguments, 1 other failure.
+
 ## Stop billing
 
-- `pod-stop.sh` stops the GPU billing. Per RunPod's pricing docs a stopped Pod is not charged for its container disk (only for a Pod-local volume disk, at a higher rate); the Network Volume bills separately (about $0.07/GB/month) whether or not a Pod runs.
+- `pod-stop.sh` (one Pod) and `stop-any.sh` (the running pool Pod) stop the GPU billing. Per RunPod's pricing docs a stopped Pod is not charged for its container disk (only for a Pod-local volume disk, at a higher rate); the Network Volume bills separately (about $0.07/GB/month) whether or not a Pod runs.
 - `pod-terminate.sh --yes` deletes a Pod permanently. It does **not** delete the Network Volume, so the model and caches survive.
 
 ## Optional: Runpod MCP servers
@@ -234,9 +257,10 @@ Values measured by the owner on the validated deployment (B300, `--safetensors-l
 | Model loading without `prefetch` | about 1128 s (18:48 min) |
 | Model loading with `prefetch` | about 216 s (3:36 min); the full prefetch took about 233 s |
 | FlashInfer autotune | about 3 min, only on the first run; the result is cached under `/workspace/vllm-cache` |
-| **Total: Pod start to the first `/v1/models` 200** | **609 s (10:09 min), ±15 s**; measured 2026-09-26 by polling every 15 s from the Pod's `startedAt` (new Pod on a different machine, model and `vllm-cache` already on the volume) |
+| **Total, new Pod on a new machine** (Pod start to the first `/v1/models` 200) | **609 s (10:09 min), ±15 s**; measured 2026-09-26 by polling every 15 s from the Pod's `startedAt` (model and `vllm-cache` already on the volume) |
+| **Total, restart of a stopped Pod on its old machine** | **356 s (5:56 min), ±10 s**; measured 2026-09-26 with `start-when-free.sh` and `wait-for-ready.sh` from the API's `startedAt` |
 
-The total was measured **once**, for a newly created Pod on a machine that had not run it before (so image and container setup are included, a download of the weights is not). It does not say how long a restart of a stopped Pod takes on its old machine (`pod-stop.sh`, then `pod-start.sh`); that can differ and is not measured yet. Measure it with:
+Each total was measured **once**. The new Pod ran on a machine that had not run it before, so image and container setup are included; a download of the weights is in neither. The restart of a stopped Pod on its old machine was about four minutes faster (plausibly because the image is already there on that machine, which is not measured). Measure it yourself with:
 
 ```bash
 set -a; source .env; set +a
@@ -245,7 +269,7 @@ set -a; source .env; set +a
 
 `start-when-free.sh` retries the start every 30 s for up to 1200 s (20 minutes) while the GPU is occupied and ends after the first successful start; the interval must be at least 30 s, and you do not call `pod-start.sh` separately. Because of the `&&`, the measurement only begins after a successful start and never if the start failed. For a single attempt without retries use `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh` instead. `wait-for-ready.sh` needs `VLLM_API_KEY` and `RUNPOD_POD_ID` (or `GLM_URL`) in your `.env`; without the key it aborts right after the Pod has already started and is billing. **A successful start bills the GPU.**
 
-`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; this assumes the API updates `startedAt` on every start and that your local clock is accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
+`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; the API did update `startedAt` on a restart in the 2026-09-26 measurement, and your local clock must be accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
 
 ## License
 
