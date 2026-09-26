@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Creates the GLM-5.3-Flash Pod through the documented REST v2 API (POST /v2/pods) and then
-# verifies it with scripts/verify-pod.sh. Use this instead of Terraform: provider 1.0.8 does not
-# send gpuTypeId, ports, dockerArgs or startSsh on create, so it produced a wrong Pod (H100,
-# port 8888, no vLLM arguments). Here every field is explicit and verified afterwards.
+# verifies it with scripts/verify-pod.sh. Every field is explicit and checked afterwards. (Terraform
+# was dropped: provider 1.0.8 did not send gpuTypeId, ports, dockerArgs or startSsh and produced a wrong
+# Pod, see the README.)
 #
 # DEFAULT IS A DRY RUN: it prints the request and creates nothing. Add --yes to create.
 # A created Pod BILLS the GPU at once (B300: about $7.89/h) until you stop or terminate it.
@@ -17,7 +17,7 @@
 #   --no-ssh   do not expose 22/tcp and do not start ssh (default: 22/tcp and startSsh, needs SSH keys
 #              registered in your RunPod account)
 # Environment (all optional):
-#   NETWORK_VOLUME_ID   default: network_volume_id from terraform/terraform.tfvars
+#   NETWORK_VOLUME_ID   REQUIRED: the ID of your Network Volume (put it in .env)
 #   POD_NAME            default: glm-5.3-flash-b300
 #   GPU_ID              default: NVIDIA B300 SXM6 AC
 #   DATACENTER          default: the datacenter of the Network Volume (required to place the Pod there)
@@ -46,11 +46,7 @@ for a in "$@"; do
 done
 
 VOLUME="${NETWORK_VOLUME_ID:-}"
-if [ -z "$VOLUME" ] && [ -f "$HERE/../terraform/terraform.tfvars" ]; then
-  VOLUME="$(sed -e 's/[[:space:]]#.*$//' "$HERE/../terraform/terraform.tfvars" \
-    | sed -n 's/^[[:space:]]*network_volume_id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-fi
-[ -n "$VOLUME" ] || { echo "Set NETWORK_VOLUME_ID (or network_volume_id in terraform/terraform.tfvars)" >&2; exit 2; }
+[ -n "$VOLUME" ] || { echo "Set NETWORK_VOLUME_ID (the ID of your Network Volume) in .env" >&2; exit 2; }
 POD_NAME="${POD_NAME:-glm-5.3-flash-b300}"
 GPU_ID="${GPU_ID:-NVIDIA B300 SXM6 AC}"
 DISK="${CONTAINER_DISK_GB:-50}"

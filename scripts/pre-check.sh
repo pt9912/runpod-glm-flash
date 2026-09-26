@@ -36,22 +36,6 @@ for t in curl python3; do
   fi
 done
 
-# terraform: minimum version comes from terraform/versions.tf
-min_tf="$(sed -n 's/.*required_version *= *"[>=~ ]*\([0-9][0-9.]*\)".*/\1/p' "$ROOT/terraform/versions.tf" 2>/dev/null | head -n1)"
-min_tf="${min_tf:-1.5.0}"
-if command -v terraform >/dev/null 2>&1; then
-  tf_ver="$(terraform version 2>/dev/null | sed -n '1s/^Terraform v\([0-9][0-9.]*\).*/\1/p')"
-  if [ -z "$tf_ver" ]; then
-    warn "terraform found but its version could not be read"
-  elif version_ge "$tf_ver" "$min_tf"; then
-    ok "terraform $tf_ver (needs >= $min_tf)"
-  else
-    warn "terraform $tf_ver is older than >= $min_tf (only the reference Terraform files need it). Update: https://developer.hashicorp.com/terraform/install"
-  fi
-else
-  warn "terraform is not installed (not needed to create the Pod; only for the reference Terraform files, >= $min_tf). Install: https://developer.hashicorp.com/terraform/install"
-fi
-
 # ansible is only needed for the optional verification step (README step 5).
 if command -v ansible-playbook >/dev/null 2>&1; then
   ok "ansible-playbook: $(ansible-playbook --version 2>/dev/null | head -n1)"
@@ -79,32 +63,10 @@ fi
 
 echo
 echo "== Files =="
-tfvars="$ROOT/terraform/terraform.tfvars"
-# Terraform also accepts TF_VAR_* and *.auto.tfvars; only complain when nothing is set up.
-alt_source=0
-if [ -n "${NETWORK_VOLUME_ID:-}" ] || [ -n "${TF_VAR_network_volume_id:-}" ] || compgen -G "$ROOT/terraform/*.auto.tfvars" >/dev/null; then
-  alt_source=1
-fi
-if [ ! -f "$tfvars" ]; then
-  if [ "$alt_source" -eq 1 ]; then
-    ok "no terraform.tfvars, but the volume comes from NETWORK_VOLUME_ID / TF_VAR_* / *.auto.tfvars"
-  else
-    fail "terraform/terraform.tfvars is missing (cp terraform.tfvars.example terraform.tfvars)"
-  fi
+if [ -n "${NETWORK_VOLUME_ID:-}" ]; then
+  ok "NETWORK_VOLUME_ID is set"
 else
-  # Look at values only: drop full-line and trailing comments before checking.
-  values="$(sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$tfvars")"
-  if printf '%s\n' "$values" | grep -q 'REPLACE_WITH'; then
-    if [ -n "${NETWORK_VOLUME_ID:-}" ]; then
-      warn "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders (ignored: NETWORK_VOLUME_ID is set)"
-    else
-      fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
-    fi
-  elif ! printf '%s\n' "$values" | grep -q '^[[:space:]]*network_volume_id[[:space:]]*=' && [ "$alt_source" -eq 0 ]; then
-    warn "terraform/terraform.tfvars does not set network_volume_id (create-pod.sh needs it or NETWORK_VOLUME_ID)"
-  else
-    ok "terraform/terraform.tfvars present, no placeholders"
-  fi
+  warn "NETWORK_VOLUME_ID is not set (needed by create-pod.sh and start-any.sh to create Pods; put it in .env)"
 fi
 
 if [ -f "$ROOT/ansible/inventory.yml" ]; then

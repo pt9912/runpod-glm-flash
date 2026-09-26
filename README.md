@@ -8,7 +8,7 @@ All commands below are run from the repository root unless a block says otherwis
 
 ## Current architecture
 
-- **Pod creation:** `scripts/create-pod.sh` (REST v2, verified right after creation). The Terraform files only describe the intended configuration: provider `runpod/runpod` 1.0.8 drops fields and must not be used to create the Pod (see "Important provider caveat")
+- **Pod creation:** `scripts/create-pod.sh` (REST v2, verified right after creation). The pool of Pods is managed with `start-any.sh` / `stop-any.sh`. There is no Terraform (see "Why there is no Terraform")
 - **API base:** `https://api.runpod.io/v2` (used by all scripts)
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
 - **Image:** `vllm/vllm-openai:glm53-flash`
@@ -19,15 +19,15 @@ All commands below are run from the repository root unless a block says otherwis
 - **Spec decode:** MTP5
 - **Auth:** RunPod Secret → `VLLM_API_KEY`
 
-## Important provider caveat: do not create the Pod with Terraform
+## Why there is no Terraform
 
-The official provider `runpod/runpod` (1.0.8) is shaped after REST API v1. **Observed on 2026-09-26: `terraform apply` created a wrong Pod** (an H100 at $3.49/h instead of the B300, port `8888/http` instead of `8000/http`, no vLLM arguments). Capturing the provider's request against a local mock showed why: it sends only `name`, `cloudType`, `imageName`, `containerDiskInGb`, `gpuCount`, `env`, `networkVolumeId` and `volumeMountPath`, and **silently drops `gpuTypeId`, `ports`, `dockerArgs` and `startSsh`**, with the v1 as well as the v2 base URL. `terraform plan` cannot reveal this, because it shows what Terraform intends, not what the provider sends. (Provider versions 1.0.6 and 1.0.7 were not evaluated; 1.0.9 does not load with Terraform 1.14.)
+Earlier versions of this repository described the Pod with Terraform (provider `runpod/runpod` 1.0.8). It was removed: **on 2026-09-26 `terraform apply` created a wrong Pod** (an H100 at $3.49/h instead of the B300, port `8888/http` instead of `8000/http`, no vLLM arguments). Capturing the provider's request against a local mock showed why: it sent only `name`, `cloudType`, `imageName`, `containerDiskInGb`, `gpuCount`, `env`, `networkVolumeId` and `volumeMountPath`, and **silently dropped `gpuTypeId`, `ports`, `dockerArgs` and `startSsh`**, with the v1 as well as the v2 base URL. `terraform plan` cannot reveal this, because it shows what Terraform intends, not what the provider sends.
 
-That is why the Pod is created with `scripts/create-pod.sh`: it calls the documented REST v2 endpoint with every field explicit and verifies the result with `scripts/verify-pod.sh` right afterwards. The Terraform files stay in the repo as a description of the intended configuration; do **not** `terraform apply` them until the provider is shown to send these fields (check with a request capture, not with `plan`). The Terraform Pod resource is therefore locked by a precondition (`allow_unsafe_apply = false`): `plan` and `apply` fail with an explanation until you lift it on purpose.
+The Pod is created with `scripts/create-pod.sh`, which calls the documented REST v2 endpoint with every field explicit and verifies the result with `scripts/verify-pod.sh` right afterwards. The Terraform files are still in the Git history (before the commit that removed them) should the provider be fixed and you want to revisit it; then check with a request capture, not with `plan`.
 
 ## Secrets
 
-No secret values belong in this repository or `terraform.tfvars`.
+No secret values belong in this repository.
 
 Set locally, either directly:
 
@@ -52,7 +52,7 @@ Create these separately in the RunPod console:
 
 Secret names are case-sensitive and must match `vllm_secret_name` / `hf_secret_name` exactly (defaults: `VLLM_API_KEY`, `HF_TOKEN`).
 
-Terraform only sends the RunPod Secret placeholder strings. Never replace them with the actual token in HCL.
+The Pod definition contains only RunPod Secret references (`{{ RUNPOD_SECRET_<name> }}`), never the values.
 
 ## 0. Pre-flight check
 
@@ -61,11 +61,11 @@ Terraform only sends the RunPod Secret placeholder strings. Never replace them w
 ./scripts/pre-check.sh --online   # additionally one read-only API call to verify the key
 ```
 
-Checks that `curl` and `python3` are installed (`terraform` only produces a warning: the reference Terraform files are the only thing that needs it), that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `terraform.tfvars` is complete. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` and `ansible/inventory.yml` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
+Checks that `curl` and `python3` are installed, that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `NETWORK_VOLUME_ID` is set. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` and `ansible/inventory.yml` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
 
 ### Tools
 
-Required: `curl` and `python3`. Install them with your package manager. Optional: `ansible-playbook` for the verification step (<https://docs.ansible.com/ansible/latest/installation_guide/>) and `terraform` (<https://developer.hashicorp.com/terraform/install>), which only the reference Terraform files need.
+Required: `curl` and `python3`. Install them with your package manager. Optional: `ansible-playbook` for the verification step (<https://docs.ansible.com/ansible/latest/installation_guide/>).
 
 `runpodctl` is **not** needed by this repo. Install it only if you want it for other things, following <https://docs.runpod.io/runpodctl/overview>. One useful case is registering your SSH public key, which the Ansible verification needs (`ssh-keygen -t ed25519`, then either paste `~/.ssh/id_ed25519.pub` into the SSH Public Keys field of your RunPod account settings, or run `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub`).
 
@@ -79,11 +79,10 @@ This performs a GET against `/v2/pods`; it does not create a GPU. It prints only
 
 ## 2. Configure
 
-The Network Volume ID is read from `terraform/terraform.tfvars` (`network_volume_id`, template: `terraform/terraform.tfvars.example`) or from the environment variable `NETWORK_VOLUME_ID`:
+Put the ID of your existing Network Volume into `.env` (template: `.env.example`):
 
 ```bash
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
-$EDITOR terraform/terraform.tfvars
+echo 'NETWORK_VOLUME_ID=<your Network Volume ID>' >> .env
 ```
 
 A Network Volume is bound to one datacenter, so a B300 must be free **in that datacenter**; a free B300 elsewhere does not help. `create-pod.sh` places the Pod in the volume's datacenter automatically. Check stock first with `./scripts/gpu-availability.sh B300 <DATACENTER>` (without a datacenter it uses the datacenter of the Pod `RUNPOD_POD_ID` if that is set, otherwise the overall stock; pass `any` for the overall stock). `B300` matches the exact GPU name; the full GPU id is `NVIDIA B300 SXM6 AC`, which you can pass as well. If no exact id/name matches, the script lists every GPU containing the text and says so. Exit codes: 0 in stock, 2 no stock, 4 unknown GPU type or datacenter (typo), 1 API error.
@@ -162,7 +161,7 @@ A stopped Pod keeps its machine assignment and resumes on the same host. If some
    ```
 
    Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity (exit code 5, nothing created).
-3. **Console migration (beta).** The RunPod console offers to migrate a stopped Pod to a machine with a free GPU. Their docs describe no API/CLI/Terraform equivalent.
+3. **Console migration (beta).** The RunPod console offers to migrate a stopped Pod to a machine with a free GPU. Their docs describe no API or CLI equivalent.
 
 Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run the Ansible verification.
 

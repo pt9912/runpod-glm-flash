@@ -1,16 +1,13 @@
-# Terraform
+# Leftover local files of the removed Terraform setup (never commit state or variables)
 .terraform/
 *.tfstate
 *.tfstate.*
 *.tfvars
 *.tfvars.json
-override.tf
-override.tf.json
-.terraform.tfstate.lock.info
-crash.log
-.startup-times.log
 tfplan
 *.tfplan
+crash.log
+.startup-times.log
 
 # Secrets / environment
 .env

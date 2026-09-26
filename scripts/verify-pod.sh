@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Read-only check that a Pod matches what this repo intends. Run it right after
-# `terraform apply` (or after a redeploy): a request can succeed while a field is silently
+# `create-pod.sh` (or after a redeploy): a request can succeed while a field is silently
 # dropped (for example the Network Volume), and then the Pod bills without the model on it.
 # It prints only non-sensitive facts: env variable NAMES (never values), and for
 # VLLM_API_KEY only whether it is a RunPod Secret reference.
 #
 # Usage: verify-pod.sh [POD_ID]
 #   POD_ID              default: RUNPOD_POD_ID
-#   EXPECTED_VOLUME_ID  default: network_volume_id from terraform/terraform.tfvars
+#   EXPECTED_VOLUME_ID  default: NETWORK_VOLUME_ID (optional: without it the volume is not compared)
 # Exit codes: 0 = no FAIL (warnings allowed), 1 = at least one FAIL or the Pod could not be read,
 #             2 = bad arguments.
 set -uo pipefail
@@ -19,11 +19,7 @@ source "$HERE/_api.sh"
 POD_ID="${1:-${RUNPOD_POD_ID:-}}"
 [ -n "$POD_ID" ] || { echo "Give a POD_ID or set RUNPOD_POD_ID" >&2; exit 2; }
 
-VOLUME="${EXPECTED_VOLUME_ID:-}"
-if [ -z "$VOLUME" ] && [ -f "$HERE/../terraform/terraform.tfvars" ]; then
-  VOLUME="$(sed -e 's/[[:space:]]#.*$//' "$HERE/../terraform/terraform.tfvars" \
-    | sed -n 's/^[[:space:]]*network_volume_id[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-fi
+VOLUME="${EXPECTED_VOLUME_ID:-${NETWORK_VOLUME_ID:-}}"
 
 resp="$(api_get "/pods/$POD_ID" 2>&1)" || { printf '%s\n' "$resp" >&2; echo "Could not read Pod $POD_ID." >&2; exit 1; }
 
