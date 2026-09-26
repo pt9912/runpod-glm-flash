@@ -147,7 +147,7 @@ GitHub-Actions-Cron läuft nur in UTC, deshalb müssen die Cron-Zeilen zweimal i
 
 Alle API-Aufrufe haben Zeitlimits (10 s Verbindungsaufbau, 60 s gesamt; überschreibbar mit `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), damit eine hängende Verbindung einen geplanten Job nicht blockieren kann. Bricht die Verbindung ab, nachdem eine Start- oder Stopp-Anfrage gesendet wurde, sagen die Skripte, dass das Ergebnis unbekannt ist; prüfe vor einem neuen Versuch mit `scripts/v2-smoke.sh`.
 
-`scripts/pod-start.sh` und `scripts/pod-stop.sh` rufen den REST-v2-Endpunkt `POST /v2/pods/{id}/action` auf (`start`/`stop`); `runpodctl` wird nicht gebraucht, nur `curl` und `python3`. Beide zeigen zuerst das Ziel an (Name, Status, Stundenkosten), damit eine veraltete `RUNPOD_POD_ID` auffällt, und tun nichts, wenn der Pod schon im gewünschten Zustand ist. Ein Start rechnet die GPU sofort ab. Das Stoppen ist für einen geplanten Betrieb riskant: siehe „Wenn die GPU belegt ist“. Automatisiere keinen zerstörerischen Redeploy, bevor das genaue Migrations-/Redeploy-Verhalten im Konto getestet ist.
+`scripts/pod-start.sh` und `scripts/pod-stop.sh` rufen den REST-v2-Endpunkt `POST /v2/pods/{id}/action` auf (`start`/`stop`); `runpodctl` wird nicht gebraucht, nur `curl` und `python3`. Beide zeigen zuerst das Ziel an (Name, Status, Stundenkosten, Datacenter), damit eine veraltete `RUNPOD_POD_ID` auffällt, und tun nichts, wenn der Pod schon im gewünschten Zustand ist. Ein Start rechnet die GPU sofort ab. Das Stoppen ist für einen geplanten Betrieb riskant: siehe „Wenn die GPU belegt ist“. Automatisiere keinen zerstörerischen Redeploy, bevor das genaue Migrations-/Redeploy-Verhalten im Konto getestet ist.
 
 ## Wenn die GPU belegt ist
 

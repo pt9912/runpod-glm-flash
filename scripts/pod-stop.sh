@@ -20,8 +20,8 @@ if [ "$rc" -ne 0 ]; then
   esac
   exit 1
 fi
-IFS=$'\t' read -r name status cost <<<"$info"
-echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
+IFS=$'\t' read -r name status cost dc <<<"$info"
+echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h, datacenter $dc"
 status_uc="$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')"
 if [ "$status_uc" = "EXITED" ]; then
   echo "Already stopped; nothing to do."

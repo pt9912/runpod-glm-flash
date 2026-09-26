@@ -61,7 +61,7 @@ MSG
   esac
 }
 
-# api_pod_info ID: GET the Pod and print "name<TAB>status<TAB>cost" (non-sensitive
+# api_pod_info ID: GET the Pod and print "name<TAB>status<TAB>cost<TAB>datacenter" (non-sensitive
 # fields only; the Pod object also contains env). Fields missing in the response
 # (or empty ones) are printed as "?". Returns 1 (message on stderr) if the GET fails.
 api_pod_info() {
@@ -79,7 +79,7 @@ def field(k):
     # No empty fields and no tabs/newlines: the caller splits on tabs.
     v = " ".join(str(p.get(k, "")).split())[:80]
     return v or "?"
-print("\t".join(field(k) for k in ("name", "status", "cost")))
+print("\t".join(field(k) for k in ("name", "status", "cost", "dataCenterId")))
 '
 }
 

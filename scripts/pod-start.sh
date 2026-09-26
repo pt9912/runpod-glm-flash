@@ -30,8 +30,11 @@ if [ "$rc" -ne 0 ]; then
       ;;
   esac
 fi
-IFS=$'\t' read -r name status cost <<<"$info"
-echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h"
+IFS=$'\t' read -r name status cost dc <<<"$info"
+echo "Target: $name ($RUNPOD_POD_ID), status $status, \$$cost/h, datacenter $dc"
+# The Pod's datacenter is the one that matters for stock (the volume is bound to it).
+dc_hint="<DATACENTER OF YOUR VOLUME>"
+[ "$dc" = "?" ] || dc_hint="$dc"
 status_uc="$(printf '%s' "$status" | tr '[:lower:]' '[:upper:]')"
 case "$status_uc" in
   RUNNING|STARTING|PROVISIONING)
@@ -64,7 +67,7 @@ if [ "$rc" -ne 0 ]; then
         cat >&2 <<HINT
 The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed).
 Options: wait and retry, or redeploy with the same volume; see README "If the GPU is occupied":
-  - poll the stock: scripts/wait-for-gpu.sh B300 <DATACENTER OF YOUR VOLUME>
+  - be notified when a B300 is free there: scripts/wait-for-gpu.sh B300 $dc_hint
   - redeploy: (cd terraform && terraform apply -replace=runpod_pod.glm) if the Pod is in the Terraform
     state, otherwise scripts/plan.sh and (cd terraform && terraform apply tfplan)
 A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
