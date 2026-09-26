@@ -2,7 +2,7 @@
 
 [Deutsch](README.de.md) | English
 
-IaC skeleton for the validated GLM-5.3-Flash deployment on one NVIDIA B300 in RunPod Secure Cloud.
+Bash tooling to run the validated GLM-5.3-Flash deployment on an NVIDIA B300 in RunPod Secure Cloud.
 
 All commands below are run from the repository root unless a block says otherwise.
 
