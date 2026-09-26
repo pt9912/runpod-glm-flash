@@ -19,6 +19,42 @@ All commands below are run from the repository root unless a block says otherwis
 - **Spec decode:** MTP5
 - **Auth:** RunPod Secret → `VLLM_API_KEY`
 
+## Scripts at a glance
+
+| Script | What it does | Changes state | GPU billing |
+|---|---|---|---|
+| `pre-check.sh` | Checks tools, environment and `NETWORK_VOLUME_ID` (`--online`: also one read-only API call) | no | no |
+| `v2-smoke.sh` | Lists your Pods (id, name, status) | no | no |
+| `gpu-availability.sh` | Shows the stock of a GPU type, overall or per datacenter | no | no |
+| `wait-for-gpu.sh` | Polls the stock until the GPU is available; never starts anything | no | no |
+| `create-pod.sh` | Creates the Pod (dry run by default, `--yes` to create) and verifies it | creates a Pod | starts |
+| `verify-pod.sh` | Checks that a Pod matches the intended configuration | no | no |
+| `check-endpoint.sh` | Checks the API through the proxy: 401 without a key, 200 with it, model and context | no | no |
+| `wait-for-ready.sh` | Polls until vLLM answers and measures the start time (writes a local log) | no | no |
+| `pod-start.sh` | Starts one stopped Pod | yes | starts |
+| `start-when-free.sh` | Retries `pod-start.sh` for one Pod while its GPU is occupied | yes | starts |
+| `start-any.sh` | Pool: gets one Pod running, restarting stopped ones first, creating a new one if none can start | yes | starts |
+| `pod-stop.sh` | Stops one Pod | yes | ends |
+| `stop-any.sh` | Stops every active Pod of the pool | yes | ends |
+| `pod-terminate.sh` | Deletes a Pod permanently (needs `--yes`; the volume stays) | yes | ends |
+
+`_api.sh` and `_pool.sh` are helpers that the other scripts source; you do not run them. `docs/schedule.example.yml` is a disabled example workflow. `pod-start.sh`, `pod-stop.sh` and `pod-terminate.sh` print the target (name, status, hourly cost) before they act, `create-pod.sh` prints the request, and `start-any.sh --dry-run` shows the pool and the order without sending anything. The scripts marked "starts" begin the GPU billing.
+
+Typical flows:
+
+```bash
+# first time
+./scripts/pre-check.sh --online
+./scripts/create-pod.sh              # dry run: shows the request and the stock
+./scripts/create-pod.sh --yes        # creates the Pod and verifies it (bills the GPU)
+./scripts/wait-for-ready.sh && ./scripts/check-endpoint.sh
+
+# every day
+./scripts/start-any.sh --wait        # gets one pool Pod running and waits until vLLM answers
+./scripts/check-endpoint.sh
+./scripts/stop-any.sh                # when you are done (ends the GPU billing)
+```
+
 ## Why there is no Terraform
 
 Earlier versions of this repository described the Pod with Terraform (provider `runpod/runpod` 1.0.8). It was removed: **on 2026-09-26 `terraform apply` created a wrong Pod** (an H100 at $3.49/h instead of the B300, port `8888/http` instead of `8000/http`, no vLLM arguments). Capturing the provider's request against a local mock showed why: it sent only `name`, `cloudType`, `imageName`, `containerDiskInGb`, `gpuCount`, `env`, `networkVolumeId` and `volumeMountPath`, and **silently dropped `gpuTypeId`, `ports`, `dockerArgs` and `startSsh`**, with the v1 as well as the v2 base URL. `terraform plan` cannot reveal this, because it shows what Terraform intends, not what the provider sends.
