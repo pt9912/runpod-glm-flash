@@ -2,7 +2,7 @@
 
 Deutsch | [English](README.md)
 
-IaC-Grundgerüst für das validierte GLM-5.3-Flash-Deployment auf einer NVIDIA B300 in RunPod Secure Cloud.
+Bash-Werkzeuge für das validierte GLM-5.3-Flash-Deployment auf einer NVIDIA B300 in RunPod Secure Cloud.
 
 Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofern ein Block nichts anderes sagt.
 
