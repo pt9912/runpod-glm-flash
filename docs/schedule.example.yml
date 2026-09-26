@@ -52,13 +52,6 @@ jobs:
     steps:
       # When enabling: pin actions by commit SHA.
       - uses: actions/checkout@v4
-      - name: Guard
-        env:
-          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}   # needs write access to Pods
-          NETWORK_VOLUME_ID: ${{ secrets.NETWORK_VOLUME_ID }}   # needed to create new Pods
-        run: |
-          test -n "$RUNPOD_API_KEY"
-          test -n "$NETWORK_VOLUME_ID"
       - name: Decide action
         id: act
         run: |
@@ -76,6 +69,15 @@ jobs:
           esac
           echo "action=$action" >> "$GITHUB_OUTPUT"
           echo "Action: $action"
+      - name: Guard
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}   # needs write access to Pods
+          NETWORK_VOLUME_ID: ${{ secrets.NETWORK_VOLUME_ID }}   # needed to create new Pods (start only)
+          ACTION: ${{ steps.act.outputs.action }}
+        run: |
+          test -n "$RUNPOD_API_KEY"
+          # A stop must not depend on the volume secret: it does not need it.
+          if [ "$ACTION" = start ]; then test -n "$NETWORK_VOLUME_ID"; fi
       - name: Start (retries while the GPU is occupied, then stops trying)
         if: steps.act.outputs.action == 'start'
         env:

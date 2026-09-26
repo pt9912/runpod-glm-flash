@@ -67,16 +67,25 @@ if [ -n "$POD_ID" ]; then
 import json, sys, datetime
 try:
     s = json.load(sys.stdin).get("startedAt")
-    print(int(datetime.datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()) if s else "")
+    if s:
+        dt = datetime.datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if dt.tzinfo is None:   # no offset: the API means UTC, do not read it as local time
+            dt = dt.replace(tzinfo=datetime.timezone.utc)
+        print(int(dt.timestamp()))
+    else:
+        print("")
 except Exception:
     print("")')"
     fi
     if [ -n "$origin_epoch" ]; then
       age=$(( $(date +%s) - origin_epoch ))
-      if [ "$age" -ge 0 ] && [ "$age" -lt 604800 ]; then
+      # Plausible only if recent: a startedAt of a previous run (the API not updated yet) or a skewed
+      # clock must not become a startup time.
+      limit=$(( TIMEOUT * 2 > 7200 ? TIMEOUT * 2 : 7200 ))
+      if [ "$age" -ge 0 ] && [ "$age" -lt "$limit" ]; then
         origin="startedAt"
       else
-        origin_epoch=""; origin_note="startedAt is in the future or older than 7 days (clock skew or an old start)"
+        origin_epoch=""; origin_note="startedAt is in the future or older than ${limit} s (the API may not have updated it yet, or your clock is off)"
       fi
     fi
   fi

@@ -39,6 +39,9 @@ api_get() { _api_request GET "$1"; }
 # api_post PATH JSON_BODY: state-changing POST (used by pod-start/stop).
 api_post() { _api_request POST "$1" "$2"; }
 
+# api_patch PATH JSON_BODY: state-changing PATCH (used to rename a Pod).
+api_patch() { _api_request PATCH "$1" "$2"; }
+
 # api_auth_hint OUTPUT: if OUTPUT (the captured stderr of a failed call) starts with
 # "HTTP 401" or "HTTP 403" (our own message format), print an explanation and
 # return 0; otherwise return 1 so the caller can show its own hint.

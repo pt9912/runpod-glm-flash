@@ -69,7 +69,7 @@ fi
 if [ -n "${RUNPOD_POD_ID:-}" ]; then
   ok "RUNPOD_POD_ID is set"
 else
-  warn "RUNPOD_POD_ID is not set (needed by pod-start.sh / pod-stop.sh)"
+  warn "RUNPOD_POD_ID is not set (needed by pod-start.sh, pod-stop.sh, verify-pod.sh, wait-for-ready.sh for a single Pod; start-any.sh / stop-any.sh do not need it)"
 fi
 if [ -n "${VLLM_API_KEY:-}" ]; then
   ok "VLLM_API_KEY is set"
@@ -95,7 +95,11 @@ else
   # Look at values only: drop full-line and trailing comments before checking.
   values="$(sed -e 's/^[[:space:]]*#.*//' -e 's/[[:space:]]#.*//' "$tfvars")"
   if printf '%s\n' "$values" | grep -q 'REPLACE_WITH'; then
-    fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
+    if [ -n "${NETWORK_VOLUME_ID:-}" ]; then
+      warn "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders (ignored: NETWORK_VOLUME_ID is set)"
+    else
+      fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
+    fi
   elif ! printf '%s\n' "$values" | grep -q '^[[:space:]]*network_volume_id[[:space:]]*=' && [ "$alt_source" -eq 0 ]; then
     warn "terraform/terraform.tfvars does not set network_volume_id (create-pod.sh needs it or NETWORK_VOLUME_ID)"
   else

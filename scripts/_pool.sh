@@ -25,9 +25,13 @@ for p in pods:
     if not isinstance(p, dict):
         continue
     name = clean(p.get("name"))
+    # An empty status becomes UNKNOWN (counted as active: fail-safe); case is normalised.
+    status = clean(p.get("status")).upper() or "UNKNOWN"
+    if status == "TERMINATED":
+        continue
     print("N\t-\t%s\t-" % name)
-    if name.startswith(os.environ["PREFIX"]) and p.get("status") != "TERMINATED":
-        members.append((clean(p.get("startedAt")), clean(p.get("id")), name, clean(p.get("status"))))
+    if name.startswith(os.environ["PREFIX"]):
+        members.append((clean(p.get("startedAt")), clean(p.get("id")), name, status))
 for started, pid, name, status in sorted(members, key=lambda m: m[0], reverse=True):
     print("M\t%s\t%s\t%s" % (pid, name, status))
 ')" || { POOL_ERR="unexpected response from GET /pods"; return 1; }
@@ -43,11 +47,17 @@ for started, pid, name, status in sorted(members, key=lambda m: m[0], reverse=Tr
 # pool_count: number of pool members.
 pool_count() { if [ -z "$POOL_MEMBERS" ]; then echo 0; else printf '%s' "$POOL_MEMBERS" | grep -c .; fi; }
 
-# pool_active: print the first member that is RUNNING, STARTING or PROVISIONING; 1 if none.
+# pool_status_active STATUS: 0 if the status means "running or about to run". Fail-safe: EVERYTHING
+# except EXITED, ERROR and TERMINATED counts (RUNNING, STARTING, PROVISIONING, and any unknown
+# status), so an unexpected status can never lead to a second Pod.
+pool_status_active() { case "$1" in EXITED|ERROR|TERMINATED) return 1 ;; *) return 0 ;; esac; }
+
+# pool_active: print the first member whose status is active (see above); 1 if none.
 pool_active() {
   local id name status
   while IFS=$'\t' read -r id name status; do
-    case "$status" in RUNNING|STARTING|PROVISIONING) printf '%s\t%s\t%s\n' "$id" "$name" "$status"; return 0 ;; esac
+    [ -n "$id" ] || continue
+    if pool_status_active "$status"; then printf '%s\t%s\t%s\n' "$id" "$name" "$status"; return 0; fi
   done <<<"$POOL_MEMBERS"
   return 1
 }
@@ -68,3 +78,23 @@ pool_pick_name() {
   done
   printf '%s\n' "$cand"
 }
+
+# ---- lock: at most one start/create at a time on this machine (a mkdir lock with the PID inside).
+# It cannot protect against runs on other machines (GitHub Actions has its own concurrency group).
+POOL_LOCKDIR="${POOL_LOCKDIR:-${TMPDIR:-/tmp}/runpod-glm-pool-$(id -u).lock}"
+POOL_LOCK_OWNED=0
+
+# pool_lock_acquire: 0 = lock taken, 1 = another live run holds it.
+pool_lock_acquire() {
+  local i holder
+  for i in 1 2 3; do
+    if mkdir "$POOL_LOCKDIR" 2>/dev/null; then
+      echo "$$" >"$POOL_LOCKDIR/pid"; POOL_LOCK_OWNED=1; return 0
+    fi
+    holder="$(cat "$POOL_LOCKDIR/pid" 2>/dev/null || true)"
+    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then POOL_LOCK_HOLDER="$holder"; return 1; fi
+    rm -rf "$POOL_LOCKDIR"   # stale: no PID or the process is gone
+  done
+  return 1
+}
+pool_lock_release() { if [ "$POOL_LOCK_OWNED" = 1 ]; then rm -rf "$POOL_LOCKDIR"; POOL_LOCK_OWNED=0; fi; }

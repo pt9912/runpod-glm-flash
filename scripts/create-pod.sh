@@ -7,8 +7,12 @@
 # DEFAULT IS A DRY RUN: it prints the request and creates nothing. Add --yes to create.
 # A created Pod BILLS the GPU at once (B300: about $7.89/h) until you stop or terminate it.
 #
-# Usage: create-pod.sh [--yes] [--online] [--no-ssh]
+# Usage: create-pod.sh [--yes] [--online] [--no-ssh] [--force] [--terminate-on-fail]
 #   --yes      really create the Pod
+#   --force    create even if a Pod of the pool (name starts with POOL_PREFIX) is already running/active
+#              (default: refuse, because two pool Pods must never run at once)
+#   --terminate-on-fail   if the created Pod fails verification, terminate it (default: stop it and
+#              rename it to failed-<name>-<id>, which takes it out of the pool and keeps it for inspection)
 #   --online   allow model downloads: HF_HUB_OFFLINE is not set and the HF_TOKEN secret is injected
 #   --no-ssh   do not expose 22/tcp and do not start ssh (default: 22/tcp and startSsh, needs SSH keys
 #              registered in your RunPod account)
@@ -21,18 +25,22 @@
 #   CONTAINER_DISK_GB   default: 50
 #
 # Exit codes: 0 = dry run done, or Pod created and verified; 1 = failure, or the Pod was created
-# but FAILED verification (terminate it: scripts/pod-terminate.sh); 2 = bad arguments/setup;
-# 3 = a Pod with this name already exists (nothing created); 5 = no capacity (nothing created).
+# but FAILED verification (it is then stopped and renamed, or terminated; see the messages);
+# 2 = bad arguments/setup; 3 = a Pod with this name exists, or a pool Pod is active (nothing
+# created); 4 = another start/create is in progress on this machine (nothing created);
+# 5 = no capacity (nothing created).
 set -uo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 HERE="$(dirname "$0")"
 # shellcheck source=scripts/_api.sh
 source "$HERE/_api.sh"
+# shellcheck source=scripts/_pool.sh
+source "$HERE/_pool.sh"
 
-YES=0; ONLINE=0; SSH=1
+YES=0; ONLINE=0; SSH=1; FORCE=0; TERMINATE_ON_FAIL=0
 for a in "$@"; do
   case "$a" in
-    --yes) YES=1 ;; --online) ONLINE=1 ;; --no-ssh) SSH=0 ;;
+    --yes) YES=1 ;; --online) ONLINE=1 ;; --no-ssh) SSH=0 ;; --force) FORCE=1 ;; --terminate-on-fail) TERMINATE_ON_FAIL=1 ;;
     *) echo "unknown argument: $a (see the header of this script)" >&2; exit 2 ;;
   esac
 done
@@ -56,19 +64,23 @@ if [ -z "$DC" ]; then
   [ -n "$DC" ] || { echo "Could not determine the datacenter of volume $VOLUME; set DATACENTER." >&2; exit 1; }
 fi
 
-# 2. Refuse to create a duplicate (a second billing Pod with the same name).
-pods="$(api_get /pods 2>&1)" || { printf '%s\n' "$pods" >&2; echo "Could not list Pods." >&2; exit 1; }
-existing="$(printf '%s' "$pods" | POD_NAME="$POD_NAME" python3 -c '
-import json, os, sys
-d = json.load(sys.stdin)
-pods = d.get("pods") if isinstance(d, dict) else d
-for p in pods or []:
-    if isinstance(p, dict) and p.get("name") == os.environ["POD_NAME"] and p.get("status") != "TERMINATED":
-        print("%s (%s)" % (p.get("id"), p.get("status")))
-')"
-if [ -n "$existing" ]; then
-  echo "A Pod named '$POD_NAME' already exists: $existing" >&2
+# 2. Only one create at a time on this machine (start-any.sh holds the lock and sets POOL_LOCK_HELD).
+if [ "$YES" -eq 1 ] && [ "${POOL_LOCK_HELD:-0}" != 1 ]; then
+  trap pool_lock_release EXIT
+  pool_lock_acquire || { echo "Another start/create is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKDIR). Nothing was created." >&2; exit 4; }
+fi
+
+# 3. Refuse to create a duplicate name, and (without --force) a second active Pod of the pool.
+pool_refresh || { printf '%s\n' "$POOL_ERR" >&2; echo "Could not list Pods." >&2; exit 1; }
+if printf '%s' "$POOL_ALL_NAMES" | grep -Fxq -- "$POD_NAME"; then
+  echo "A Pod named '$POD_NAME' already exists." >&2
   echo "Nothing was created. Terminate it (scripts/pod-terminate.sh), or set POD_NAME." >&2
+  exit 3
+fi
+if [ "$FORCE" -ne 1 ] && act="$(pool_active)"; then
+  IFS=$'\t' read -r a_id a_name a_status <<<"$act"
+  echo "A pool Pod is already active: '$a_name' ($a_id), status $a_status. Two pool Pods must not run at once." >&2
+  echo "Nothing was created. Stop it (scripts/stop-any.sh), or use --force if you really want a second one." >&2
   exit 3
 fi
 
@@ -127,18 +139,23 @@ if [ "$YES" -ne 1 ]; then
 fi
 
 # 4. Create. Never retried automatically: a request that may have arrived must not be sent twice.
-set +e
 out="$(api_post /pods "$body" 2>&1)"
 rc=$?
-set -e
 if [ "$rc" -ne 0 ]; then
   printf '%s\n' "$out" >&2
   echo >&2
   api_auth_hint "$out" && exit 1
   case "$(printf '%s' "$out" | head -n1)" in
-    "HTTP 400"*) echo "The API rejected the request or there is no capacity for $GPU_ID in $DC right now. Nothing was created (see the message above). Try again later: scripts/wait-for-gpu.sh B300 $DC" >&2; exit 5 ;;
+    "HTTP 400"*)
+      # Only the "no capacity" answer is retryable. (Observed: "There are no longer any instances
+      # available with the requested specifications.") Any other 400 is a rule violation.
+      if printf '%s' "$out" | grep -qiE "instances available|no capacity|out of capacity"; then
+        echo "There is no capacity for $GPU_ID in $DC right now. Nothing was created (see the message above). Try again later: scripts/wait-for-gpu.sh B300 $DC" >&2; exit 5
+      fi
+      echo "The API rejected the request (see the message above). Nothing was created." >&2; exit 1 ;;
     "HTTP 402"*) echo "Insufficient balance. Nothing was created." >&2; exit 1 ;;
     "HTTP 422"*) echo "The request body failed validation (see above). Nothing was created." >&2; exit 1 ;;
+    "HTTP 429"*|"HTTP 5"*) echo "The API answered with a server error or is throttling. Whether a Pod was created is NOT certain: check scripts/v2-smoke.sh before retrying." >&2; exit 1 ;;
     "HTTP "*)    echo "Pod creation failed (see above)." >&2; exit 1 ;;
     *) echo "The connection failed while the request may already have been sent: the outcome is UNKNOWN and a Pod may exist (and bill). Check before retrying: scripts/v2-smoke.sh" >&2; exit 1 ;;
   esac
@@ -164,6 +181,26 @@ if EXPECTED_VOLUME_ID="$VOLUME" "$HERE/verify-pod.sh" "$new_id"; then
   exit 0
 fi
 echo >&2
-echo "VERIFICATION FAILED. The Pod is billing and is not what was intended. Terminate it now:" >&2
-echo "  RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+echo "VERIFICATION FAILED: Pod $new_id is not what was intended, and it is billing." >&2
+if [ "$TERMINATE_ON_FAIL" -eq 1 ]; then
+  if term_out="$(api_post "/pods/$new_id/action" '{"action":"terminate"}' 2>&1)"; then
+    echo "It was TERMINATED (--terminate-on-fail); the Network Volume is untouched." >&2
+  else
+    printf '%s\n' "$term_out" >&2
+    echo "TERMINATING FAILED. The Pod is still billing: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+  fi
+  exit 1
+fi
+# Default: stop it first (ends the GPU billing), then rename it so it leaves the pool. It is kept for inspection.
+failed_name="failed-${POD_NAME}-${new_id}"
+if ! api_post "/pods/$new_id/action" '{"action":"stop"}' >/dev/null 2>&1; then
+  echo "STOPPING FAILED. The Pod is still billing: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+  exit 1
+fi
+echo "It was STOPPED (billing ended)." >&2
+if api_patch "/pods/$new_id" "$(FAILED_NAME="$failed_name" python3 -c 'import json,os; print(json.dumps({"name": os.environ["FAILED_NAME"]}))')" >/dev/null 2>&1; then
+  echo "It was renamed to '$failed_name', so it is no longer part of the pool. Inspect it, then remove it: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+else
+  echo "Renaming failed: the stopped Pod still carries the pool name and could be restarted by start-any.sh. Remove it: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+fi
 exit 1
