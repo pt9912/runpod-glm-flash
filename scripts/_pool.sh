@@ -62,6 +62,16 @@ pool_active() {
   return 1
 }
 
+# pool_other_active ID: print the first ACTIVE member whose id is not ID; 1 if there is none.
+pool_other_active() {
+  local id name status
+  while IFS=$'\t' read -r id name status; do
+    [ -n "$id" ] || continue
+    if [ "$id" != "$1" ] && pool_status_active "$status"; then printf '%s\t%s\t%s\n' "$id" "$name" "$status"; return 0; fi
+  done <<<"$POOL_MEMBERS"
+  return 1
+}
+
 # pool_candidates: print the members that can be started (EXITED or ERROR), most recent first.
 pool_candidates() {
   local id name status
@@ -79,22 +89,100 @@ pool_pick_name() {
   printf '%s\n' "$cand"
 }
 
-# ---- lock: at most one start/create at a time on this machine (a mkdir lock with the PID inside).
-# It cannot protect against runs on other machines (GitHub Actions has its own concurrency group).
-POOL_LOCKDIR="${POOL_LOCKDIR:-${TMPDIR:-/tmp}/runpod-glm-pool-$(id -u).lock}"
-POOL_LOCK_OWNED=0
+# ---- lock: at most one start/create at a time on this machine.
+# A kernel file lock on a fixed file, so there are no stale locks and no PID reuse:
+#   - flock(1) if it exists (Linux), held on file descriptor 9;
+#   - otherwise a small python3 helper (python3 is required anyway) that holds fcntl.flock and exits
+#     as soon as this script is gone, so even a SIGKILL of the script frees the lock within a moment.
+# It does not protect against runs on other machines (GitHub Actions has its own concurrency group).
+POOL_LOCKFILE="${POOL_LOCKFILE:-${XDG_RUNTIME_DIR:-/tmp}/runpod-glm-pool-$(id -u).lock}"
+POOL_LOCK_OWNED=0        # 1 = flock(1) held, 2 = python helper holds it
+POOL_LOCK_HELPER=""
+POOL_LOCK_HOLDER=""
 
-# pool_lock_acquire: 0 = lock taken, 1 = another live run holds it.
+# pool_lock_acquire: 0 = lock taken, 1 = another live run holds it (or the lock file cannot be opened).
 pool_lock_acquire() {
-  local i holder
-  for i in 1 2 3; do
-    if mkdir "$POOL_LOCKDIR" 2>/dev/null; then
-      echo "$$" >"$POOL_LOCKDIR/pid"; POOL_LOCK_OWNED=1; return 0
+  local kind rest
+  if [ "${POOL_NO_FLOCK:-0}" != 1 ] && command -v flock >/dev/null 2>&1; then
+    # append: opening must not truncate the holder's PID. The group carries the 2>/dev/null: a redirection on
+    # `exec` itself would silence stderr of the whole script for good.
+    { exec 9>>"$POOL_LOCKFILE"; } 2>/dev/null || return 1
+    if flock -n 9; then
+      printf '%s\n' "$$" >"$POOL_LOCKFILE" 2>/dev/null || true   # information only; the lock is the flock
+      POOL_LOCK_OWNED=1; return 0
     fi
-    holder="$(cat "$POOL_LOCKDIR/pid" 2>/dev/null || true)"
-    if [ -n "$holder" ] && kill -0 "$holder" 2>/dev/null; then POOL_LOCK_HOLDER="$holder"; return 1; fi
-    rm -rf "$POOL_LOCKDIR"   # stale: no PID or the process is gone
-  done
+    POOL_LOCK_HOLDER="$(cat "$POOL_LOCKFILE" 2>/dev/null || true)"
+    exec 9>&-
+    return 1
+  fi
+  exec 8< <(POOL_LOCKFILE="$POOL_LOCKFILE" PARENT="$$" python3 -c '
+import fcntl, os, sys, time
+path, parent = os.environ["POOL_LOCKFILE"], int(os.environ["PARENT"])
+try:
+    f = open(path, "a")
+    fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except OSError:
+    try:
+        holder = open(path).read().strip() or "?"
+    except OSError:
+        holder = "?"
+    sys.stdout.write("BUSY %s\n" % holder); sys.stdout.flush(); sys.exit(0)
+open(path, "w").write("%d\n" % parent)     # information only
+sys.stdout.write("LOCKED %d\n" % os.getpid()); sys.stdout.flush()
+while True:                                   # hold the lock while the script lives
+    try:
+        os.kill(parent, 0)
+    except OSError:
+        break
+    time.sleep(0.3)
+') || return 1
+  read -r -u 8 kind rest || { exec 8<&-; return 1; }
+  if [ "$kind" = LOCKED ]; then POOL_LOCK_OWNED=2; POOL_LOCK_HELPER="$rest"; return 0; fi
+  POOL_LOCK_HOLDER="$rest"; exec 8<&-
   return 1
 }
-pool_lock_release() { if [ "$POOL_LOCK_OWNED" = 1 ]; then rm -rf "$POOL_LOCKDIR"; POOL_LOCK_OWNED=0; fi; }
+
+# pool_lock_release: release only what this process owns.
+pool_lock_release() {
+  case "$POOL_LOCK_OWNED" in
+    1) exec 9>&- ;;
+    2) [ -z "$POOL_LOCK_HELPER" ] || kill "$POOL_LOCK_HELPER" 2>/dev/null; exec 8<&- ;;
+  esac
+  POOL_LOCK_OWNED=0
+}
+
+# ---- choosing the Pod to act on
+# pool_active_count: number of active pool members.
+pool_active_count() {
+  local id name status n=0
+  while IFS=$'\t' read -r id name status; do
+    [ -n "$id" ] || continue
+    if pool_status_active "$status"; then n=$((n + 1)); fi
+  done <<<"$POOL_MEMBERS"
+  echo "$n"
+}
+
+RESOLVED_POD_ID=""; RESOLVED_SOURCE=""
+# pool_resolve_pod [ARG]: sets RESOLVED_POD_ID and RESOLVED_SOURCE. Precedence: ARG, the single ACTIVE
+# pool Pod (needs RUNPOD_API_KEY), RUNPOD_POD_ID. Returns 0 = resolved, 1 = nothing (the caller may try
+# GLM_URL), 2 = several pool Pods are active (POOL_MEMBERS lists them; the caller must ask for an ID).
+# This is what keeps a stale RUNPOD_POD_ID in .env from pointing a check at a stopped Pod.
+pool_resolve_pod() {
+  local arg="${1:-}" n act id name status
+  RESOLVED_POD_ID=""; RESOLVED_SOURCE=""
+  if [ -n "$arg" ]; then RESOLVED_POD_ID="$arg"; RESOLVED_SOURCE="argument"; return 0; fi
+  if [ -n "${RUNPOD_API_KEY:-}" ] && pool_refresh 2>/dev/null; then
+    n="$(pool_active_count)"
+    if [ "$n" -eq 1 ]; then
+      act="$(pool_active)"; IFS=$'\t' read -r id name status <<<"$act"
+      RESOLVED_POD_ID="$id"; RESOLVED_SOURCE="the active pool Pod '$name' (status $status)"; return 0
+    elif [ "$n" -gt 1 ]; then
+      return 2
+    fi
+  fi
+  if [ -n "${RUNPOD_POD_ID:-}" ]; then
+    RESOLVED_POD_ID="$RUNPOD_POD_ID"; RESOLVED_SOURCE="RUNPOD_POD_ID"
+    return 0
+  fi
+  return 1
+}

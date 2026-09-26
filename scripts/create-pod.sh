@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # Creates the GLM-5.3-Flash Pod through the documented REST v2 API (POST /v2/pods) and then
-# verifies it with scripts/verify-pod.sh. Every field is explicit and checked afterwards. (Terraform
-# was dropped: provider 1.0.8 did not send gpuTypeId, ports, dockerArgs or startSsh and produced a wrong
-# Pod, see the README.)
+# verifies it with scripts/verify-pod.sh. Every field is explicit and checked afterwards.
 #
 # DEFAULT IS A DRY RUN: it prints the request and creates nothing. Add --yes to create.
 # A created Pod BILLS the GPU at once (B300: about $7.89/h) until you stop or terminate it.
@@ -29,7 +27,8 @@
 # but FAILED verification (it is then stopped and renamed, or terminated; see the messages);
 # 2 = bad arguments/setup; 3 = a Pod with this name exists, or a pool Pod is active (nothing
 # created); 4 = another start/create is in progress on this machine (nothing created);
-# 5 = no capacity (nothing created).
+# 5 = no capacity (nothing created); 6 = created and running, but verification could not run (the Pod
+# could not be read): it is left untouched, check it with verify-pod.sh.
 set -uo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 HERE="$(dirname "$0")"
@@ -49,6 +48,7 @@ done
 
 VOLUME="${NETWORK_VOLUME_ID:-}"
 [ -n "$VOLUME" ] || { echo "Set NETWORK_VOLUME_ID (the ID of your Network Volume) in .env" >&2; exit 2; }
+POD_NAME_GIVEN="${POD_NAME:-}"
 POD_NAME="${POD_NAME:-glm-5.3-flash-b300}"
 GPU_ID="${GPU_ID:-NVIDIA B300 SXM6 AC}"
 DISK="${CONTAINER_DISK_GB:-50}"
@@ -65,15 +65,21 @@ fi
 # 2. Only one create at a time on this machine (start-any.sh holds the lock and sets POOL_LOCK_HELD).
 if [ "$YES" -eq 1 ] && [ "${POOL_LOCK_HELD:-0}" != 1 ]; then
   trap pool_lock_release EXIT
-  pool_lock_acquire || { echo "Another start/create is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKDIR). Nothing was created." >&2; exit 4; }
+  pool_lock_acquire || { echo "Another start/create is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKFILE). Nothing was created." >&2; exit 4; }
 fi
 
 # 3. Refuse to create a duplicate name, and (without --force) a second active Pod of the pool.
 pool_refresh || { printf '%s\n' "$POOL_ERR" >&2; echo "Could not list Pods." >&2; exit 1; }
 if printf '%s' "$POOL_ALL_NAMES" | grep -Fxq -- "$POD_NAME"; then
-  echo "A Pod named '$POD_NAME' already exists." >&2
-  echo "Nothing was created. Terminate it (scripts/pod-terminate.sh), or set POD_NAME." >&2
-  exit 3
+  if [ "$FORCE" -eq 1 ] && [ -z "${POD_NAME_GIVEN:-}" ]; then
+    # --force with the default name: take the next free pool name instead of failing
+    POD_NAME="$(pool_pick_name)"
+    echo "The default name is taken; --force uses the free name '$POD_NAME'." >&2
+  else
+    echo "A Pod named '$POD_NAME' already exists." >&2
+    echo "Nothing was created. Terminate it (scripts/pod-terminate.sh), or set POD_NAME." >&2
+    exit 3
+  fi
 fi
 if [ "$FORCE" -ne 1 ] && act="$(pool_active)"; then
   IFS=$'\t' read -r a_id a_name a_status <<<"$act"
@@ -173,32 +179,63 @@ echo "Created Pod $new_id. It is billing now."
 echo "Add this to your .env:  RUNPOD_POD_ID=$new_id"
 echo
 echo "Verifying (read-only) ..."
-if EXPECTED_VOLUME_ID="$VOLUME" "$HERE/verify-pod.sh" "$new_id"; then
+EXPECTED_VOLUME_ID="$VOLUME" "$HERE/verify-pod.sh" "$new_id" 9>&-   # fd 9 = the lock: not for children
+vrc=$?
+if [ "$vrc" -eq 0 ]; then
   echo
-  echo "Next: set RUNPOD_POD_ID in .env, then scripts/wait-for-ready.sh (needs VLLM_API_KEY)."
+  echo "Next: set RUNPOD_POD_ID in .env (or rely on the active pool Pod), then scripts/wait-for-ready.sh and scripts/check-endpoint.sh (need VLLM_API_KEY)."
   exit 0
 fi
+if [ "$vrc" -ne 1 ]; then
+  # The check could not run (the Pod could not be read even after retries): that is NOT evidence that the
+  # Pod is wrong, so it is left alone.
+  echo >&2
+  echo "Pod $new_id was created and is RUNNING (billing), but it could NOT be verified (verify-pod.sh exit $vrc). I did not touch it." >&2
+  echo "Check it now: scripts/verify-pod.sh $new_id   (stop or delete it if it is wrong: scripts/pod-terminate.sh --yes)" >&2
+  exit 6
+fi
+
+# ---- verification FAILED: the Pod is wrong and billing. Clean up, every step retried.
 echo >&2
 echo "VERIFICATION FAILED: Pod $new_id is not what was intended, and it is billing." >&2
+TRIES="${CLEANUP_TRIES:-3}"; DELAY="${CLEANUP_DELAY:-2}"
+retry() {   # retry CMD...: up to TRIES attempts, DELAY seconds apart
+  local i=1
+  while :; do
+    "$@" >/dev/null 2>&1 && return 0
+    [ "$i" -lt "$TRIES" ] || return 1
+    i=$((i + 1)); sleep "$DELAY"
+  done
+}
+do_action() { retry api_post "/pods/$new_id/action" "{\"action\":\"$1\"}"; }
+failed_name="failed-${POD_NAME}-${new_id}"
+do_rename() { retry api_patch "/pods/$new_id" "$(FAILED_NAME="$failed_name" python3 -c 'import json,os; print(json.dumps({"name": os.environ["FAILED_NAME"]}))')"; }
+
+stopped=0; renamed=0; terminated=0
 if [ "$TERMINATE_ON_FAIL" -eq 1 ]; then
-  if term_out="$(api_post "/pods/$new_id/action" '{"action":"terminate"}' 2>&1)"; then
+  do_action terminate && terminated=1
+fi
+if [ "$terminated" -eq 0 ]; then
+  do_action stop && stopped=1          # ends the GPU billing
+  do_rename && renamed=1               # takes it out of the pool (the name no longer starts with the prefix)
+  if [ "$stopped" -eq 0 ] || [ "$renamed" -eq 0 ]; then
+    do_action terminate && terminated=1   # fallback: never leave a wrong Pod billing or restartable
+  fi
+fi
+cmd="RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes"
+if [ "$terminated" -eq 1 ]; then
+  if [ "$TERMINATE_ON_FAIL" -eq 1 ]; then
     echo "It was TERMINATED (--terminate-on-fail); the Network Volume is untouched." >&2
   else
-    printf '%s\n' "$term_out" >&2
-    echo "TERMINATING FAILED. The Pod is still billing: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+    echo "Stopping and renaming did not both work, so it was TERMINATED instead (stopped: $([ $stopped -eq 1 ] && echo yes || echo no), renamed: $([ $renamed -eq 1 ] && echo yes || echo no)). The Network Volume is untouched." >&2
   fi
-  exit 1
-fi
-# Default: stop it first (ends the GPU billing), then rename it so it leaves the pool. It is kept for inspection.
-failed_name="failed-${POD_NAME}-${new_id}"
-if ! api_post "/pods/$new_id/action" '{"action":"stop"}' >/dev/null 2>&1; then
-  echo "STOPPING FAILED. The Pod is still billing: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
-  exit 1
-fi
-echo "It was STOPPED (billing ended)." >&2
-if api_patch "/pods/$new_id" "$(FAILED_NAME="$failed_name" python3 -c 'import json,os; print(json.dumps({"name": os.environ["FAILED_NAME"]}))')" >/dev/null 2>&1; then
-  echo "It was renamed to '$failed_name', so it is no longer part of the pool. Inspect it, then remove it: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+elif [ "$stopped" -eq 1 ] && [ "$renamed" -eq 1 ]; then
+  echo "It was STOPPED (billing ended) and renamed to '$failed_name', so it is no longer part of the pool. Inspect it, then remove it: $cmd" >&2
+elif [ "$stopped" -eq 0 ] && [ "$renamed" -eq 1 ]; then
+  echo "It was renamed to '$failed_name' (out of the pool), but STOPPING AND TERMINATING FAILED: it is STILL BILLING. Run: $cmd" >&2
+elif [ "$stopped" -eq 1 ]; then
+  echo "It was stopped, but RENAMING AND TERMINATING FAILED: it still carries the pool name and could be restarted by start-any.sh. Run: $cmd" >&2
 else
-  echo "Renaming failed: the stopped Pod still carries the pool name and could be restarted by start-any.sh. Remove it: RUNPOD_POD_ID=$new_id scripts/pod-terminate.sh --yes" >&2
+  echo "NOTHING WORKED (stop, rename, terminate): the Pod is STILL BILLING and still in the pool. Run: $cmd" >&2
 fi
 exit 1

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Measures how long a Pod takes from "started" to "vLLM answers": polls
-# GET <GLM_URL>/v1/models with the vLLM API key until it returns 200, prints the
+# GET <Pod URL>/v1/models with the vLLM API key until it returns 200, prints the
 # elapsed time and appends it to .startup-times.log (git-ignored).
 # It only reads; it never starts or stops anything. Typical use:
 #   scripts/start-when-free.sh 1200 30 && scripts/wait-for-ready.sh
 #
 # Usage: wait-for-ready.sh [TIMEOUT_SECONDS] [INTERVAL_SECONDS]      defaults: 3600, 15
-# Env:   VLLM_API_KEY (required); GLM_URL, or RUNPOD_POD_ID (then
-#        https://<id>-8000.proxy.runpod.net is used)
+# Which Pod: the single ACTIVE pool Pod (needs RUNPOD_API_KEY), else RUNPOD_POD_ID, else GLM_URL
+#        (https://<id>-8000.proxy.runpod.net for a Pod ID); the choice and the reason are printed.
+#        Needs VLLM_API_KEY (required).
 # Exit codes: 0 = ready, 3 = timeout, 4 = key rejected (HTTP 401/403), 2 = bad arguments/setup,
-# 1 = VLLM_API_KEY not set.
+# 1 = VLLM_API_KEY not set (also 2 if several pool Pods are active and none was chosen).
 #
 # The clock starts at the Pod's `startedAt` from the API (needs RUNPOD_API_KEY and a Pod ID:
 # the one in the proxy URL, or RUNPOD_POD_ID), so the result does not depend on when this
@@ -29,19 +30,37 @@ case "$TIMEOUT$INTERVAL" in *[!0-9]*) echo "TIMEOUT and INTERVAL must be whole s
 TIMEOUT=$((10#$TIMEOUT)); INTERVAL=$((10#$INTERVAL))   # "08" is decimal, not invalid octal
 [ "$INTERVAL" -ge "${READY_MIN_INTERVAL:-5}" ] || { echo "INTERVAL must be >= 5 s" >&2; exit 2; }
 
-if [ -n "${GLM_URL:-}" ]; then
-  URL="${GLM_URL%/}"
-  URL="${URL%/v1}"   # the script appends /v1/models itself
-  # the URL, not RUNPOD_POD_ID, decides which Pod is measured
-elif [ -n "${RUNPOD_POD_ID:-}" ]; then
-  URL="https://${RUNPOD_POD_ID}-8000.proxy.runpod.net"
-else
-  echo "Set GLM_URL (https://POD_ID-8000.proxy.runpod.net) or RUNPOD_POD_ID" >&2
-  exit 2
-fi
-
 HERE="$(dirname "$0")"
+# shellcheck source=scripts/_api.sh
+source "$HERE/_api.sh"
+# shellcheck source=scripts/_pool.sh
+source "$HERE/_pool.sh"
 LOG="$(cd "$HERE/.." && pwd)/.startup-times.log"
+
+# Which Pod: the single ACTIVE pool Pod (needs RUNPOD_API_KEY), else RUNPOD_POD_ID, else GLM_URL. A stale
+# RUNPOD_POD_ID or GLM_URL left in .env must not send the measurement to a stopped Pod.
+resolve_rc=0; pool_resolve_pod "" || resolve_rc=$?
+case "$resolve_rc" in
+  0)
+    URL="https://${RESOLVED_POD_ID}-8000.proxy.runpod.net"
+    echo "Pod: $RESOLVED_POD_ID (source: $RESOLVED_SOURCE)"
+    ;;
+  2)
+    echo "Several pool Pods are active; run it with RUNPOD_POD_ID set to the one you mean. Active pool Pods:" >&2
+    printf '%s' "$POOL_MEMBERS" | while IFS=$'\t' read -r i n st; do [ -z "$i" ] || printf '  %s  %s  %s\n' "$n" "$i" "$st" >&2; done
+    exit 2
+    ;;
+  *)
+    if [ -n "${GLM_URL:-}" ]; then
+      URL="${GLM_URL%/}"
+      URL="${URL%/v1}"   # the script appends /v1/models itself
+      echo "Pod: from GLM_URL"
+    else
+      echo "No pool Pod is active and neither RUNPOD_POD_ID nor GLM_URL is set" >&2
+      exit 2
+    fi
+    ;;
+esac
 
 # Which Pod is measured: the one in a proxy URL (https://<id>-8000.proxy.runpod.net).
 POD_ID=""

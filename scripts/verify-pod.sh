@@ -6,22 +6,45 @@
 # VLLM_API_KEY only whether it is a RunPod Secret reference.
 #
 # Usage: verify-pod.sh [POD_ID]
-#   POD_ID              default: RUNPOD_POD_ID
+#   POD_ID              default: the single active pool Pod, else RUNPOD_POD_ID (the chosen Pod and why
+#                       are printed)
 #   EXPECTED_VOLUME_ID  default: NETWORK_VOLUME_ID (optional: without it the volume is not compared)
-# Exit codes: 0 = no FAIL (warnings allowed), 1 = at least one FAIL or the Pod could not be read,
-#             2 = bad arguments.
+#   VERIFY_TRIES / VERIFY_DELAY   how often / how long apart the Pod is read (default 3 / 2 s)
+# Exit codes: 0 = no FAIL (warnings allowed), 1 = at least one FAIL (the Pod is not what was intended),
+#             2 = bad arguments, 6 = the Pod could not be read even after retries: NOTHING was verified,
+#             which is not the same as "wrong" (create-pod.sh leaves the Pod alone in that case).
 set -uo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 HERE="$(dirname "$0")"
 # shellcheck source=scripts/_api.sh
 source "$HERE/_api.sh"
+# shellcheck source=scripts/_pool.sh
+source "$HERE/_pool.sh"
 
-POD_ID="${1:-${RUNPOD_POD_ID:-}}"
-[ -n "$POD_ID" ] || { echo "Give a POD_ID or set RUNPOD_POD_ID" >&2; exit 2; }
+pool_resolve_pod "${1:-}"; rc=$?
+if [ "$rc" -eq 2 ]; then
+  echo "Several pool Pods are active; give the POD_ID:" >&2
+  printf '%s' "$POOL_MEMBERS" | while IFS=$'\t' read -r i n st; do [ -z "$i" ] || printf '  %s  %s  %s\n' "$n" "$i" "$st" >&2; done
+  exit 2
+fi
+[ "$rc" -eq 0 ] || { echo "Give a POD_ID, or set RUNPOD_POD_ID" >&2; exit 2; }
+POD_ID="$RESOLVED_POD_ID"
+case "$POD_ID" in *[!a-z0-9]*|"") echo "Invalid Pod ID '$POD_ID' (expected lower-case letters and digits)" >&2; exit 2 ;; esac
+echo "Verifying Pod $POD_ID (source: $RESOLVED_SOURCE)"
 
 VOLUME="${EXPECTED_VOLUME_ID:-${NETWORK_VOLUME_ID:-}}"
 
-resp="$(api_get "/pods/$POD_ID" 2>&1)" || { printf '%s\n' "$resp" >&2; echo "Could not read Pod $POD_ID." >&2; exit 1; }
+# Reading is safe to repeat: one network hiccup must not be read as "the Pod is wrong".
+tries="${VERIFY_TRIES:-3}"; delay="${VERIFY_DELAY:-2}"; n=0
+until resp="$(api_get "/pods/$POD_ID" 2>&1)"; do
+  n=$((n + 1))
+  if [ "$n" -ge "$tries" ]; then
+    printf '%s\n' "$resp" >&2
+    echo "Could not read Pod $POD_ID ($tries tries): NOTHING was verified." >&2
+    exit 6
+  fi
+  sleep "$delay"
+done
 
 printf '%s' "$resp" | python3 -c '
 import json, sys

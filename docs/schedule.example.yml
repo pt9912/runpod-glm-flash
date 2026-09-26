@@ -11,6 +11,7 @@
 # GPU (B300: about $7.89/h), so review this file carefully before enabling it. If the GPU stays
 # occupied, the job fails and the Pod stays stopped for that day. No start attempt begins after
 # MAX_WAIT_SECONDS (an attempt already running can finish about 2 minutes later).
+# Note: the logs show Pod IDs and proxy URLs (GitHub masks secrets, not these); they are not credentials.
 # Caveats: GitHub only usually notifies you about a failed run (to the user who last changed the
 # cron entry, per their notification settings); cron runs can be delayed or dropped, which matters
 # for the stop job; scheduled workflows of public repos with no activity for 60 days are disabled
@@ -52,6 +53,8 @@ jobs:
     steps:
       # When enabling: pin actions by commit SHA.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false   # the job never pushes; do not leave the token in .git/config
       - name: Decide action
         id: act
         run: |

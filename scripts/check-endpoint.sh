@@ -1,34 +1,52 @@
 #!/usr/bin/env bash
 # Read-only check of a running Pod through the RunPod HTTPS proxy (no SSH needed):
-#   1. WITHOUT a key the API must answer 401 (if it answers 200, the server is OPEN to everyone),
+#   1. WITHOUT a key the /v1 API must answer 401 (if it answers 200, the server is OPEN to everyone),
 #   2. WITH your key it must answer 200 (a 401 means the server runs with a different key, for
 #      example an unresolved RunPod Secret placeholder after a mistyped secret name),
 #   3. the served model is glm-5.3-flash with the full 1,048,576 context.
 # Prints only statuses, the model id and the context length, never a key.
 #
-# Usage: check-endpoint.sh [POD_ID]      POD_ID defaults to RUNPOD_POD_ID; GLM_URL is used only if there is no
-#        Pod ID at all. Needs VLLM_API_KEY (the value of your RunPod Secret).
-# Notes: /health, /metrics and /docs are not protected by vLLM, so they are not used for the negative test.
-# Exit codes: 0 = all checks passed, 1 = at least one FAIL, 2 = bad arguments/setup,
-#             3 = the endpoint does not answer yet (Pod still booting, 502/524/timeout).
+# Usage: check-endpoint.sh [POD_ID]
+#   Which Pod: POD_ID if given; else the single ACTIVE pool Pod (needs RUNPOD_API_KEY); else
+#   RUNPOD_POD_ID; else GLM_URL. The chosen Pod and the reason are printed. If several pool Pods are
+#   active, give the POD_ID. A Pod ID must be lower-case letters and digits.
+#   Needs VLLM_API_KEY (the value of your RunPod Secret).
+# Notes: vLLM protects only /v1/*; /health, /metrics and /docs are open by design, so they are not used
+#   for the negative test and "protected" here means the /v1 API.
+# Exit codes: 0 = all checks passed, 1 = at least one FAIL, 2 = bad arguments/setup (including a
+#   missing VLLM_API_KEY), 3 = the endpoint does not answer (Pod still booting, or the proxy/server gave
+#   502/503/504/524/429/5xx/404 or no answer): nothing could be concluded.
 set -uo pipefail
-: "${VLLM_API_KEY:?Set VLLM_API_KEY (the value of your RunPod Secret)}"
+HERE="$(dirname "$0")"
+# shellcheck source=scripts/_api.sh
+source "$HERE/_api.sh"
+# shellcheck source=scripts/_pool.sh
+source "$HERE/_pool.sh"
 
-POD_ID="${1:-${RUNPOD_POD_ID:-}}"
-# A Pod ID (argument, else RUNPOD_POD_ID) wins over GLM_URL: an old GLM_URL left in .env must not
-# redirect the check to another Pod.
+[ -n "${VLLM_API_KEY:-}" ] || { echo "Set VLLM_API_KEY (the value of your RunPod Secret)" >&2; exit 2; }
+
+pool_resolve_pod "${1:-}"; rc=$?
+case "$rc" in
+  0) POD_ID="$RESOLVED_POD_ID"; SOURCE="$RESOLVED_SOURCE" ;;
+  2) echo "Several pool Pods are active; give the POD_ID:" >&2
+     printf '%s' "$POOL_MEMBERS" | while IFS=$'\t' read -r i n st; do [ -z "$i" ] || printf '  %s  %s  %s\n' "$n" "$i" "$st" >&2; done
+     exit 2 ;;
+  *) POD_ID=""; SOURCE="" ;;
+esac
 if [ -n "$POD_ID" ]; then
+  case "$POD_ID" in *[!a-z0-9]*) echo "Invalid Pod ID '$POD_ID' (expected lower-case letters and digits)" >&2; exit 2 ;; esac
   URL="https://${POD_ID}-8000.proxy.runpod.net"
 elif [ -n "${GLM_URL:-}" ]; then
-  URL="${GLM_URL%/}"; URL="${URL%/v1}"
+  URL="${GLM_URL%/}"; URL="${URL%/v1}"; SOURCE="GLM_URL"
 else
-  echo "Give a POD_ID, or set RUNPOD_POD_ID or GLM_URL" >&2; exit 2
+  echo "Give a POD_ID, or start a pool Pod, or set RUNPOD_POD_ID or GLM_URL" >&2; exit 2
 fi
 
 fails=0
 ok()   { printf '[ ok ] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*"; }
 fail() { printf '[FAIL] %s\n' "$*"; fails=$((fails + 1)); }
+not_answering() { echo "[....] the endpoint does not answer (HTTP $1): the Pod may still be booting, or it is stopped. Try scripts/wait-for-ready.sh."; exit 3; }
 
 # get PATH [withkey]: sets CODE and BODY. The key goes through stdin (--config -), never onto the command line.
 get() {
@@ -45,22 +63,21 @@ EOT
   BODY="${resp%$'\n'*}"
 }
 
-echo "Endpoint: ${URL}/v1/models"
+echo "Endpoint: ${URL}/v1/models   (Pod: ${POD_ID:-?}, source: ${SOURCE:-?})"
 
 get /v1/models
 case "$CODE" in
-  401|403) ok "without a key: HTTP $CODE (the API is protected)" ;;
+  401|403) ok "without a key: HTTP $CODE (the /v1 API is protected)" ;;
   200)     fail "WITHOUT a key the API answers 200: the server is OPEN to everyone. Stop it (scripts/stop-any.sh) and check the RunPod Secret VLLM_API_KEY" ;;
-  000|404|502|503|504|524)
-    echo "[....] the endpoint does not answer yet (HTTP $CODE): the Pod may still be booting. Try scripts/wait-for-ready.sh."
-    exit 3 ;;
-  *)       warn "without a key: unexpected HTTP $CODE" ;;
+  000|404|429|5??) not_answering "$CODE" ;;
+  *)       fail "without a key: unexpected HTTP $CODE (the protection could not be confirmed)" ;;
 esac
 
 get /v1/models withkey
 case "$CODE" in
   200) ok "with your key: HTTP 200" ;;
   401|403) fail "with your key: HTTP $CODE. The server runs with a DIFFERENT key (an unresolved secret placeholder or a mistyped secret name?)" ;;
+  000|404|429|5??) not_answering "$CODE" ;;
   *)   fail "with your key: unexpected HTTP $CODE" ;;
 esac
 

@@ -8,7 +8,7 @@ All commands below are run from the repository root unless a block says otherwis
 
 ## Current architecture
 
-- **Pod creation:** `scripts/create-pod.sh` (REST v2, verified right after creation). The pool of Pods is managed with `start-any.sh` / `stop-any.sh`. There is no Terraform (see "Why there is no Terraform")
+- **Pod creation:** `scripts/create-pod.sh` (REST v2, verified right after creation). The pool of Pods is managed with `start-any.sh` / `stop-any.sh`.
 - **API base:** `https://api.runpod.io/v2` (used by all scripts)
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
 - **Image:** `vllm/vllm-openai:glm53-flash`
@@ -55,12 +55,6 @@ Typical flows:
 ./scripts/stop-any.sh                # when you are done (ends the GPU billing)
 ```
 
-## Why there is no Terraform
-
-Earlier versions of this repository described the Pod with Terraform (provider `runpod/runpod` 1.0.8). It was removed: **on 2026-09-26 `terraform apply` created a wrong Pod** (an H100 at $3.49/h instead of the B300, port `8888/http` instead of `8000/http`, no vLLM arguments). Capturing the provider's request against a local mock showed why: it sent only `name`, `cloudType`, `imageName`, `containerDiskInGb`, `gpuCount`, `env`, `networkVolumeId` and `volumeMountPath`, and **silently dropped `gpuTypeId`, `ports`, `dockerArgs` and `startSsh`**, with the v1 as well as the v2 base URL. `terraform plan` cannot reveal this, because it shows what Terraform intends, not what the provider sends.
-
-The Pod is created with `scripts/create-pod.sh`, which calls the documented REST v2 endpoint with every field explicit and verifies the result with `scripts/verify-pod.sh` right afterwards. The Terraform files are still in the Git history (before the commit that removed them) should the provider be fixed and you want to revisit it; then check with a request capture, not with `plan`.
-
 ## Secrets
 
 No secret values belong in this repository.
@@ -84,9 +78,9 @@ set -a; source .env; set +a
 Create these separately in the RunPod console:
 
 - `VLLM_API_KEY`
-- `HF_TOKEN` (only needed for a fresh setup with `offline_mode = false`)
+- `HF_TOKEN` (only needed for a fresh setup with `create-pod.sh --online`)
 
-Secret names are case-sensitive and must match `vllm_secret_name` / `hf_secret_name` exactly (defaults: `VLLM_API_KEY`, `HF_TOKEN`).
+Secret names are case-sensitive and must match `VLLM_SECRET_NAME` / `HF_SECRET_NAME` exactly (defaults: `VLLM_API_KEY`, `HF_TOKEN`).
 
 The Pod definition contains only RunPod Secret references (`{{ RUNPOD_SECRET_<name> }}`), never the values.
 
@@ -141,13 +135,15 @@ Review the request: 1× B300, `mounts.network` with your volume on `/workspace`,
 ./scripts/create-pod.sh --yes
 ```
 
-This is the step that starts billable B300 compute (about $7.89/h). The script never retries a request that may have been sent. It then runs `scripts/verify-pod.sh` (read-only): 1× B300, the volume on `/workspace`, port 8000, `VLLM_API_KEY` as a Secret reference (never empty, never a literal value), the caches on `/workspace` and the key vLLM arguments; it prints env variable names only, never values. On success, put the printed Pod ID into `.env` as `RUNPOD_POD_ID`. If the verification fails, the Pod is wrong and billing, so the script **stops it right away and renames it to `failed-<name>-<id>`**: billing ends, and the Pod leaves the pool (see below) so it is never restarted by accident, but it stays for you to inspect. With `--terminate-on-fail` it is deleted instead. If stopping fails, the message says the Pod is still billing and names the command to end it:
+This is the step that starts billable B300 compute (about $7.89/h). The script never retries a request that may have been sent. It then runs `scripts/verify-pod.sh` (read-only): 1× B300, the volume on `/workspace`, port 8000, `VLLM_API_KEY` as a Secret reference (never empty, never a literal value), the caches on `/workspace` and the key vLLM arguments; it prints env variable names only, never values. On success, put the printed Pod ID into `.env` as `RUNPOD_POD_ID`. The check reads the Pod up to three times, so one network hiccup is not read as "the Pod is wrong". If the check **fails**, the Pod is wrong and billing, so `create-pod.sh` cleans up, every step retried: it **stops** it (billing ends), **renames** it to `failed-<name>-<id>` (it leaves the pool, so it is never restarted by accident, but stays for you to inspect) and, if stopping or renaming still did not work, **terminates** it as a fallback. With `--terminate-on-fail` it is deleted right away. The final message says exactly what worked and, if anything did not, the command to end it:
 
 ```bash
 RUNPOD_POD_ID=<the new ID> ./scripts/pod-terminate.sh --yes
 ```
 
-`pod-terminate.sh` deletes a Pod permanently (without `--yes` it only shows the target); the Network Volume is a separate resource and stays, so model and caches survive. `create-pod.sh` refuses to create a second Pod while another Pod of the pool is active (`--force` overrides that) and takes a lock so that two runs on the same machine cannot create at the same time. Exit codes of `create-pod.sh`: 0 done, 1 failure or failed verification, 2 bad arguments, 3 a Pod with this name exists or a pool Pod is active, 4 another start/create is in progress, 5 no capacity (nothing created; only the "no instances available" answer counts as capacity, any other HTTP 400 is a rejected request). You can verify any Pod later with `./scripts/verify-pod.sh [POD_ID]`.
+If the check **could not run** at all (the Pod could not be read, exit 6), the Pod is left running untouched and the message says to run `verify-pod.sh <POD_ID>`; that is not evidence that it is wrong.
+
+`pod-terminate.sh` deletes a Pod permanently (without `--yes` it only shows the target); the Network Volume is a separate resource and stays, so model and caches survive. `create-pod.sh` refuses to create a second Pod while another Pod of the pool is active (`--force` overrides that and, if the default name is taken, uses the next free name such as `glm-5.3-flash-b300-2`) and takes a lock so that two runs on the same machine cannot create at the same time. Exit codes of `create-pod.sh`: 0 done, 1 failure or failed verification, 2 bad arguments, 3 a Pod with this name exists or a pool Pod is active, 4 another start/create is in progress, 6 created but the verification could not run, 5 no capacity (nothing created; only the "no instances available" answer counts as capacity, any other HTTP 400 is a rejected request). You can verify any Pod later with `./scripts/verify-pod.sh [POD_ID]`.
 
 ## 5. Check the endpoint
 
@@ -161,7 +157,7 @@ Once the Pod answers (`wait-for-ready.sh`), this read-only check goes through th
 - **with your `VLLM_API_KEY`** it answers `200` (a `401` means the server runs with a different key, for example an unresolved Secret placeholder after a mistyped secret name),
 - the served model is `glm-5.3-flash` with `max_model_len` 1048576 (a different model root only warns).
 
-It uses the Pod from `RUNPOD_POD_ID` or the ID you pass (`./scripts/check-endpoint.sh <POD_ID>`), never a stale `GLM_URL`. Exit codes: 0 all checks passed, 1 a check failed, 2 bad arguments, 3 the endpoint does not answer yet (still booting).
+Which Pod: the ID you pass (`./scripts/check-endpoint.sh <POD_ID>`), else the single **active pool Pod**, else `RUNPOD_POD_ID`, else `GLM_URL`; the chosen Pod and the reason are printed, so a stale ID in `.env` cannot send the check to a stopped Pod. If several pool Pods are active, give the ID (it must be lower-case letters and digits). Only the `/v1` API is protected by vLLM; `/health` and `/metrics` are open by design. Exit codes: 0 all checks passed, 1 a check failed (including an unexpected answer to the no-key test), 2 bad arguments or missing `VLLM_API_KEY`, 3 the endpoint does not answer (still booting, stopped, or a 5xx/429/404).
 
 **SSH is off by default:** a new Pod exposes only `8000/http`. `create-pod.sh --ssh` (or `CREATE_POD_SSH=1` for `start-any.sh`) also opens `22/tcp` and starts ssh. That needs SSH public keys registered in your RunPod account and an sshd in the container, which is not verified for this image, and it allows root login: use keys only.
 
@@ -186,7 +182,7 @@ All API calls time out (10 s connect, 60 s total; override with `API_CONNECT_TIM
 
 A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the GPU meanwhile, `pod start` cannot succeed. Observed on 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; nothing is started or billed in that case. RunPod's docs describe three options:
 
-1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/start-when-free.sh [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (defaults 7200 s, 60 s) retries the actual start while the GPU is occupied and stops after one success or at the cap. That is the right tool for a stopped Pod: it resumes on its own machine, which the catalog stock says nothing about, and a failed attempt costs nothing. `pod-start.sh` returns exit code 5 for "GPU occupied" and 6 for "Pod could not be read, nothing sent" (`start-when-free.sh` retries 6 up to 10 times in a row; `start-any.sh` just skips such a Pod in that round); any other failure aborts at once so a possibly started Pod is never started twice. Cancelling the run stops the running attempt, but a start request that was already sent cannot be undone (the script then says to check `scripts/v2-smoke.sh`). **A successful start bills the GPU.** If you only want to be notified, not to start, `./scripts/wait-for-gpu.sh B300` (uses the datacenter of your Pod from `RUNPOD_POD_ID`; name another datacenter explicitly, or `any` for the overall stock) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything (a typo in the GPU or datacenter aborts with exit 4 instead of polling forever). Stock changes within minutes, so act right away and expect that a start can still fail.
+1. **Wait.** The GPU frees up once the other user stops their Pod. `./scripts/start-when-free.sh [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (defaults 7200 s, 60 s) retries the actual start while the GPU is occupied and stops after one success or at the cap. That is the right tool for a stopped Pod: it resumes on its own machine, which the catalog stock says nothing about, and a failed attempt costs nothing. `pod-start.sh` refuses (exit code 3) to start a pool Pod while another pool Pod is active, unless you pass `--force`, so a stale `RUNPOD_POD_ID` cannot start a second billing Pod; it returns exit code 5 for "GPU occupied" and 6 for "Pod could not be read, nothing sent" (`start-when-free.sh` retries 6 up to 10 times in a row; `start-any.sh` just skips such a Pod in that round); any other failure aborts at once so a possibly started Pod is never started twice. Cancelling the run stops the running attempt, but a start request that was already sent cannot be undone (the script then says to check `scripts/v2-smoke.sh`). **A successful start bills the GPU.** If you only want to be notified, not to start, `./scripts/wait-for-gpu.sh B300` (uses the datacenter of your Pod from `RUNPOD_POD_ID`; name another datacenter explicitly, or `any` for the overall stock) polls the stock read-only every 60 s and rings the terminal bell when the GPU is available; it never starts anything (a typo in the GPU or datacenter aborts with exit 4 instead of polling forever). Stock changes within minutes, so act right away and expect that a start can still fail.
 2. **Redeploy (recommended with a Network Volume).** Create a new Pod that attaches the same volume; `/workspace` (model, HF and vLLM caches) is untouched, and RunPod's docs say a Network Volume can be attached to several Pods, so the stopped Pod does not have to be terminated first. RunPod picks a machine with a free B300 in the volume's datacenter:
 
    ```bash
@@ -197,7 +193,7 @@ A stopped Pod keeps its machine assignment and resumes on the same host. If some
    Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity (exit code 5, nothing created).
 3. **Console migration (beta).** The RunPod console offers to migrate a stopped Pod to a machine with a free GPU. Their docs describe no API or CLI equivalent.
 
-Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run `check-endpoint.sh`.
+Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`) and `GLM_URL` (Claude Code), and re-run `check-endpoint.sh`.
 
 For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the GPU is taken at 05:00, the start is retried (see "Wait" above) for at most two hours; if it stays taken, the day is skipped (no attempt begins after the cap; one already running can finish about 2 minutes later).
 
@@ -215,18 +211,18 @@ A stopped Pod resumes only on its own machine (see above). Keeping several Pods,
 
 `start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (defaults 1200 s and 30 s, interval at least 30 s) works in rounds:
 
-1. If a pool Pod is already active (any status except `EXITED`, `ERROR` and `TERMINATED`, so an unexpected status counts as active too), it does nothing: **never two pool Pods at once** (they share `/workspace/vllm-cache` and would bill twice). A lock in `$TMPDIR` also keeps two runs on the same machine from starting or creating at the same time (the second one exits with code 4).
+1. If a pool Pod is already active (any status except `EXITED`, `ERROR` and `TERMINATED`, so an unexpected status counts as active too), it does nothing: **never two pool Pods at once** (they share `/workspace/vllm-cache` and would bill twice). A kernel file lock (`POOL_LOCKFILE`, by default in `$XDG_RUNTIME_DIR` or `/tmp`) also keeps two runs on the same machine from starting or creating at the same time (the second one exits with code 4); the lock is released even if a run is killed.
 2. It tries to start the stopped pool Pods one after the other, the most recently used first. A try on an occupied machine costs nothing.
 3. If none can start and the pool has fewer than `POOL_MAX` Pods (default 6), it creates a new Pod like `create-pod.sh --yes`, named `glm-5.3-flash-b300`, `glm-5.3-flash-b300-2`, and so on (`--no-create` turns this off), and verifies it with `verify-pod.sh`.
 4. Otherwise it waits and repeats. No attempt begins after `MAX_WAIT_SECONDS` (exit code 3); an attempt already running is not cut off, and with many pool Pods a round can last minutes (each Pod tried costs up to two API calls of up to 60 s; a round makes about 5 + 2N calls for N stopped Pods).
 
 Only "machine occupied" (`pod-start.sh` exit 5), "no capacity" (`create-pod.sh` exit 5) and a temporarily unreadable Pod are retried. Every other failure stops at once, so a Pod that may have been started or created is never retried. If a created Pod fails verification, `create-pod.sh` stops and renames it (see step 4) and `start-any.sh` stops without trying anything else. Cancelling stops the running attempt, but a request that was already sent cannot be undone. **A success bills the GPU (about $7.89/h).**
 
-The script prints the ID and URL of the running Pod (`RUNPOD_POD_ID`, `GLM_URL`). With a pool, the ID in `.env` no longer has to name the running Pod; `--wait` measures exactly that Pod (an old `GLM_URL` from `.env` is ignored for it; `READY_TIMEOUT` sets the wait in seconds, default 3600). If the Pod runs but `wait-for-ready.sh` cannot confirm readiness, the exit code is 7 and the message says the Pod is running and billing. Remove Pods you no longer need with `pod-terminate.sh` (the volume stays); a full pool creates no new Pod. Exit codes: 0 a pool Pod is running, 3 gave up (nothing running), 4 another start/create is in progress, 7 running but not confirmed ready (`--wait`), 130 interrupted, 2 bad arguments, 1 other failure.
+The script prints the ID and URL of the running Pod (`RUNPOD_POD_ID`, `GLM_URL`). With a pool, the ID in `.env` no longer has to name the running Pod; `--wait` measures exactly that Pod (an old `GLM_URL` from `.env` is ignored for it; `READY_TIMEOUT` sets the wait in seconds, default 3600). Later, `verify-pod.sh`, `wait-for-ready.sh` and `check-endpoint.sh` pick the single active pool Pod on their own and print which one and why; `pod-start.sh`, `pod-stop.sh` and `pod-terminate.sh` still use `RUNPOD_POD_ID`. If the Pod runs but `wait-for-ready.sh` cannot confirm readiness, the exit code is 7 and the message says the Pod is running and billing. Remove Pods you no longer need with `pod-terminate.sh` (the volume stays); a full pool creates no new Pod. Exit codes: 0 a pool Pod is running, 3 gave up (nothing running), 4 another start/create is in progress, 7 running but not confirmed ready (`--wait`), 130 interrupted, 2 bad arguments, 1 other failure.
 
 ## Stop billing
 
-- `pod-stop.sh` (one Pod) and `stop-any.sh` (every active pool Pod; it retries reading the Pod list up to five times before giving up) stop the GPU billing. Per RunPod's pricing docs a stopped Pod is not charged for its container disk (only for a Pod-local volume disk, at a higher rate); the Network Volume bills separately (about $0.07/GB/month) whether or not a Pod runs.
+- `pod-stop.sh` (one Pod) and `stop-any.sh` (every active pool Pod; it retries reading the Pod list up to five times, `STOP_LIST_TRIES` and `STOP_RETRY_DELAY`, before giving up) stop the GPU billing. Per RunPod's pricing docs a stopped Pod is not charged for its container disk (only for a Pod-local volume disk, at a higher rate); the Network Volume bills separately (about $0.07/GB/month) whether or not a Pod runs.
 - `pod-terminate.sh --yes` deletes a Pod permanently. It does **not** delete the Network Volume, so the model and caches survive.
 
 ## Optional: Runpod MCP servers
@@ -279,7 +275,7 @@ claude --model glm-5.3-flash
 
 Keep `--gpu-memory-utilization 0.96` with MTP5. Do not reuse a fixed KV-cache byte value measured without MTP.
 
-`HF_HUB_OFFLINE=1` (default, `offline_mode = true`) assumes the complete checkpoint is already on the persistent Network Volume.
+`HF_HUB_OFFLINE=1` (the default; `create-pod.sh --online` turns it off) assumes the complete checkpoint is already on the persistent Network Volume.
 
 ## Startup times
 
@@ -302,7 +298,7 @@ set -a; source .env; set +a
 
 `start-when-free.sh` retries the start every 30 s for up to 1200 s (20 minutes) while the GPU is occupied and ends after the first successful start; the interval must be at least 30 s, and you do not call `pod-start.sh` separately. Because of the `&&`, the measurement only begins after a successful start and never if the start failed. For a single attempt without retries use `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh` instead. `wait-for-ready.sh` needs `VLLM_API_KEY` and `RUNPOD_POD_ID` (or `GLM_URL`) in your `.env`; without the key it aborts right after the Pod has already started and is billing. **A successful start bills the GPU.**
 
-`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; the API did update `startedAt` on a restart in the 2026-09-26 measurement, and your local clock must be accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` is a generous limit, not a measurement.
+`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (for the single active pool Pod, else `RUNPOD_POD_ID`, else `GLM_URL`; the choice is printed), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; the API did update `startedAt` on a restart in the 2026-09-26 measurement, and your local clock must be accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` is a generous limit, not a measurement.
 
 ## License
 

@@ -23,9 +23,6 @@ ok()   { printf '[ ok ] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*"; warns=$((warns + 1)); }
 fail() { printf '[FAIL] %s\n' "$*"; fails=$((fails + 1)); }
 
-# version_ge A B: true if A >= B (dotted versions)
-version_ge() { [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]; }
-
 echo "== Tools =="
 # curl and python3 are used by every script (API calls, JSON handling).
 for t in curl python3; do
@@ -51,11 +48,11 @@ fi
 if [ -n "${VLLM_API_KEY:-}" ]; then
   ok "VLLM_API_KEY is set"
 else
-  warn "VLLM_API_KEY is not set (needed by clients such as Claude Code)"
+  warn "VLLM_API_KEY is not set (needed by wait-for-ready.sh, check-endpoint.sh and clients such as Claude Code)"
 fi
 
 echo
-echo "== Files =="
+echo "== Configuration =="
 if [ -n "${NETWORK_VOLUME_ID:-}" ]; then
   ok "NETWORK_VOLUME_ID is set"
 else

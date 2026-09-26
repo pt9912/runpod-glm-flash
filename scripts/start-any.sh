@@ -11,7 +11,8 @@
 # A SUCCESS BILLS THE GPU (B300: about $7.89/h) from that moment on. A failed try creates or starts
 # nothing. Only "GPU occupied"/"no capacity" (exit 5) and a temporarily unreadable Pod (exit 6)
 # are retried; anything else stops at once, so a possibly started or created Pod is never
-# retried. If a created Pod FAILS verification, the script stops and tells you to terminate it.
+# retried. If a created Pod FAILS verification, create-pod.sh stops and renames it (or terminates
+# it as a fallback) and the script stops; if the verification could not run, the Pod is left running.
 #
 # Usage: start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]
 #   MAX_WAIT_SECONDS  attempts begin for at most this long (default 1200). An attempt already running
@@ -24,8 +25,8 @@
 # Environment: POOL_PREFIX (default glm-5.3-flash-b300), POOL_MAX (default 6), NETWORK_VOLUME_ID etc. as
 #   for create-pod.sh (CREATE_POD_SSH=1 makes new Pods expose ssh); READY_TIMEOUT (seconds, default 3600) for --wait
 #
-# Only ONE start-any.sh (or create-pod.sh --yes) can run at a time on this machine (a lock in
-# $TMPDIR); a second one exits with code 4 and starts/creates nothing.
+# Only ONE start-any.sh (or create-pod.sh --yes) can run at a time on this machine (a kernel file
+# lock, released even if the script is killed); a second one exits with code 4 and starts/creates nothing.
 #
 # Exit codes: 0 = a pool Pod is running (started, created, or already running), 3 = gave up (nothing
 #   running), 4 = another start/create is in progress, 130 = interrupted, 2 = bad arguments,
@@ -61,7 +62,7 @@ trap 'rm -f "$tmp"; pool_lock_release' EXIT
 on_signal() {
   # Job cancelled: stop the running attempt (prevents a request that has not been sent yet), but say
   # clearly that one that was already sent cannot be undone.
-  [ -z "$child" ] || kill -TERM -- "-$child" 2>/dev/null
+  [ -z "$child" ] || kill -TERM -- "-$child" 2>/dev/null || kill -TERM "$child" 2>/dev/null
   echo >&2
   echo "Interrupted. If a start or create request had already been sent, a Pod may be starting or exist (and bill): check with scripts/v2-smoke.sh." >&2
   exit 130
@@ -71,7 +72,9 @@ trap on_signal INT TERM
 # run_child CMD...: run in its own process group; sets RC and OUT.
 run_child() {
   set -m
-  "$@" >"$tmp" 2>&1 </dev/null &   # stdin closed: a child must never eat the lines of the loop that calls us
+  # stdin closed: a child must never eat the lines of the loop that calls us; fd 9 closed: a child (or
+  # anything it leaves running) must never keep the lock alive after this script is gone.
+  "$@" >"$tmp" 2>&1 </dev/null 9>&- &
   child=$!
   set +m
   wait "$child"; RC=$?; child=""
@@ -85,8 +88,11 @@ finish() {   # finish ID NAME HOW
   echo "  Use: RUNPOD_POD_ID=$1   GLM_URL=https://$1-8000.proxy.runpod.net"
   if [ "$WAIT" -eq 1 ]; then
     # A GLM_URL exported from .env would point at another Pod and take precedence: drop it, use this Pod.
-    env -u GLM_URL RUNPOD_POD_ID="$1" "$HERE/wait-for-ready.sh" "${READY_TIMEOUT:-3600}" 10
-    wrc=$?
+    # In the background, so that a SIGTERM to this script is handled at once instead of after the wait.
+    env -u GLM_URL RUNPOD_POD_ID="$1" "$HERE/wait-for-ready.sh" "${READY_TIMEOUT:-3600}" 10 9>&- &
+    child=$!
+    wait "$child"; wrc=$?
+    child=""
     if [ "$wrc" -ne 0 ]; then
       echo "Pod $2 ($1) IS RUNNING and billing, but wait-for-ready.sh did not confirm readiness (its exit code was $wrc)." >&2
       echo "Check it, or stop it: scripts/stop-any.sh" >&2
@@ -115,7 +121,7 @@ if [ "$DRY" -eq 1 ]; then
 fi
 
 # ---------------------------------------------------------------- lock + main loop
-pool_lock_acquire || { echo "Another start-any.sh / create-pod.sh is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKDIR). Nothing was started or created." >&2; exit 4; }
+pool_lock_acquire || { echo "Another start-any.sh / create-pod.sh is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKFILE). Nothing was started or created." >&2; exit 4; }
 export POOL_LOCK_HELD=1   # create-pod.sh (child) must not try to take the lock again
 start=$SECONDS; attempt=0; read_failures=0; full_noted=0
 echo "Getting a '$POOL_PREFIX*' Pod running (attempts begin for up to ${MAX_WAIT}s, every ${INTERVAL}s; pool max $POOL_MAX; create: $([ "$CREATE" -eq 1 ] && echo yes || echo no))."
@@ -165,6 +171,11 @@ while true; do
             finish "${newid:-?}" "$newname" "(newly created)"
             ;;
           5) echo "[$(date +%H:%M:%S)] round $attempt: no capacity for a new Pod ('$newname')" ;;
+          6)
+            printf '%s\n' "$OUT" >&2
+            echo "A Pod '$newname' was created and is RUNNING, but could not be verified (see above). Check it with scripts/verify-pod.sh; nothing else is tried." >&2
+            exit 1
+            ;;
           3) echo "[$(date +%H:%M:%S)] round $attempt: the name '$newname' was taken meanwhile; picking another next round" ;;
           *)
             printf '%s\n' "$OUT" >&2

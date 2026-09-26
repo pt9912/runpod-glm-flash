@@ -1,4 +1,4 @@
-# Leftover local files of the removed Terraform setup (never commit state or variables)
+# Local Terraform files (never commit state or variables)
 .terraform/
 *.tfstate
 *.tfstate.*

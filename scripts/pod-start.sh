@@ -1,14 +1,26 @@
 #!/usr/bin/env bash
 # Starts the stopped Pod RUNPOD_POD_ID (this bills the GPU from the moment it runs).
+# Usage: pod-start.sh [--force]        (POD_START_FORCE=1 does the same)
+# A Pod of the pool (name starts with POOL_PREFIX) is NOT started while another pool Pod is active:
+# two pool Pods must not run at once (they share /workspace/vllm-cache and would bill twice).
+# --force overrides that check.
 # Exit codes: 0 = started or already running, 1 = failure (auth, unknown Pod, unknown
-# outcome, ...), 5 = the GPU on the Pod's machine is occupied (nothing started, nothing
-# billed; safe to retry, see scripts/start-when-free.sh), 6 = the Pod could not be read
-# (timeout, 5xx, 429...): nothing was sent, safe to retry.
+# outcome, ...), 3 = refused: another pool Pod is active (nothing sent), 5 = the GPU on the
+# Pod's machine is occupied (nothing started, nothing billed; safe to retry, see
+# scripts/start-when-free.sh), 6 = the Pod or the pool could not be read (timeout, 5xx, 429...):
+# nothing was sent, safe to retry, 2 = bad arguments.
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 : "${RUNPOD_POD_ID:?Set RUNPOD_POD_ID}"
 # shellcheck source=scripts/_api.sh
 source "$(dirname "$0")/_api.sh"
+# shellcheck source=scripts/_pool.sh
+source "$(dirname "$0")/_pool.sh"
+
+FORCE="${POD_START_FORCE:-0}"
+for a in "$@"; do
+  case "$a" in --force) FORCE=1 ;; *) echo "unknown argument: $a (usage: pod-start.sh [--force])" >&2; exit 2 ;; esac
+done
 
 # 1. Show which Pod this acts on (a stale RUNPOD_POD_ID would start the wrong one).
 set +e
@@ -40,6 +52,30 @@ case "$status_uc" in
   RUNNING|STARTING|PROVISIONING)
     echo "Already $status; nothing to do."
     exit 0
+    ;;
+esac
+
+# 1b. Never a second pool Pod: refuse if another Pod of the pool is active (reading the pool is safe to repeat).
+case "$name" in
+  "$POOL_PREFIX"*)
+    if [ "$FORCE" != 1 ]; then
+      n=0
+      until pool_refresh; do
+        n=$((n + 1))
+        if [ "$n" -ge 3 ]; then
+          printf '%s\n' "$POOL_ERR" >&2
+          echo "Could not check whether another pool Pod is active; nothing was started (safe to retry, or use --force)." >&2
+          exit 6
+        fi
+        sleep 2
+      done
+      if other="$(pool_other_active "$RUNPOD_POD_ID")"; then
+        IFS=$'\t' read -r o_id o_name o_status <<<"$other"
+        echo "Refusing to start: the pool Pod '$o_name' ($o_id) is already $o_status. Two pool Pods must not run at once." >&2
+        echo "Stop it first (scripts/stop-any.sh), or use --force if you really want both." >&2
+        exit 3
+      fi
+    fi
     ;;
 esac
 

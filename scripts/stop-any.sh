@@ -4,6 +4,8 @@
 # running Pod's ID changes (pool). Nothing to do if no pool Pod is running.
 #
 # Usage: stop-any.sh [--dry-run]
+# Environment: STOP_LIST_TRIES (default 5) and STOP_RETRY_DELAY (default 5 s): how often / how long apart the
+#   Pod list is read before giving up (reading is safe to repeat).
 # Exit codes: 0 = done (or nothing to stop), 1 = at least one stop failed, 2 = bad arguments.
 set -uo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
