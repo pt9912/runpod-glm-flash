@@ -61,13 +61,13 @@ The Pod definition contains only RunPod Secret references (`{{ RUNPOD_SECRET_<na
 ./scripts/pre-check.sh --online   # additionally one read-only API call to verify the key
 ```
 
-Checks that `curl` and `python3` are installed, that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `NETWORK_VOLUME_ID` is set. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` and `ansible/inventory.yml` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
+Checks that `curl` and `python3` are installed, that `RUNPOD_API_KEY` is exported (a plain `. .env` does not export; use `set -a; source .env; set +a`) and that `NETWORK_VOLUME_ID` is set. `RUNPOD_POD_ID` and `VLLM_API_KEY` only produce warnings because they are needed later. Secret values are never printed. Exit code 1 means a blocking problem.
 
 ### Tools
 
-Required: `curl` and `python3`. Install them with your package manager. Optional: `ansible-playbook` for the verification step (<https://docs.ansible.com/ansible/latest/installation_guide/>).
+Required: `curl` and `python3`. Install them with your package manager.
 
-`runpodctl` is **not** needed by this repo. Install it only if you want it for other things, following <https://docs.runpod.io/runpodctl/overview>. One useful case is registering your SSH public key, which the Ansible verification needs (`ssh-keygen -t ed25519`, then either paste `~/.ssh/id_ed25519.pub` into the SSH Public Keys field of your RunPod account settings, or run `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub`).
+`runpodctl` is **not** needed by this repo. Install it only if you want it for other things, following <https://docs.runpod.io/runpodctl/overview>. One useful case is registering your SSH public key, which you need for a Pod created with `--ssh` (`ssh-keygen -t ed25519`, then either paste `~/.ssh/id_ed25519.pub` into the SSH Public Keys field of your RunPod account settings, or run `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub`).
 
 ## 1. Read-only REST v2 check
 
@@ -95,7 +95,7 @@ By default the Pod runs in offline mode: the checkpoint is expected on the volum
 ./scripts/create-pod.sh
 ```
 
-The default is a **dry run**: it reads the datacenter of the volume, refuses if a Pod with the same name already exists, prints the complete request (only RunPod Secret references, no secret values) plus the current stock, and creates nothing. Options: `--online` (downloads allowed), `--no-ssh` (no `22/tcp` and no `startSsh`). Environment overrides: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
+The default is a **dry run**: it reads the datacenter of the volume, refuses if a Pod with the same name already exists, prints the complete request (only RunPod Secret references, no secret values) plus the current stock, and creates nothing. Options: `--online` (downloads allowed), `--ssh` (also `22/tcp` and `startSsh`; off by default). Environment overrides: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
 
 Review the request: 1× B300, `mounts.network` with your volume on `/workspace`, port 8000, the image, the vLLM arguments (1M context, MTP, `--max-num-seqs 6`) and that `VLLM_API_KEY` is a `{{ RUNPOD_SECRET_... }}` reference.
 
@@ -113,23 +113,21 @@ RUNPOD_POD_ID=<the new ID> ./scripts/pod-terminate.sh --yes
 
 `pod-terminate.sh` deletes a Pod permanently (without `--yes` it only shows the target); the Network Volume is a separate resource and stays, so model and caches survive. `create-pod.sh` refuses to create a second Pod while another Pod of the pool is active (`--force` overrides that) and takes a lock so that two runs on the same machine cannot create at the same time. Exit codes of `create-pod.sh`: 0 done, 1 failure or failed verification, 2 bad arguments, 3 a Pod with this name exists or a pool Pod is active, 4 another start/create is in progress, 5 no capacity (nothing created; only the "no instances available" answer counts as capacity, any other HTTP 400 is a rejected request). You can verify any Pod later with `./scripts/verify-pod.sh [POD_ID]`.
 
-## 5. Verify with Ansible
+## 5. Check the endpoint
 
 ```bash
-cd ansible
-cp inventory.example.yml inventory.yml
-$EDITOR inventory.yml
-ansible-playbook playbook.yml
-cd ..
+./scripts/check-endpoint.sh
 ```
 
-Security note: the Pod exposes `22/tcp` with root login (`startSsh`) because the Ansible role connects as `root`, and `ansible.cfg` sets `host_key_checking = False` because Pod host keys change on redeploy. Both are deliberate trade-offs; use SSH keys only, and create the Pod with `create-pod.sh --no-ssh` (no `22/tcp`, no `startSsh`) once you no longer need verification or shell access.
+Once the Pod answers (`wait-for-ready.sh`), this read-only check goes through the RunPod HTTPS proxy and needs no SSH. It prints only statuses, the model id and the context length, never a key. It checks that:
 
-**Prerequisites for SSH (unverified for this setup):** your RunPod account needs registered SSH public keys (they are injected as `PUBLIC_KEY`), and the container must actually run an sshd. `docker_args` replaces the image's start command with `vllm serve`, and it is not known whether the vLLM image ships or starts openssh-server. If port 22 does not answer, the Ansible role cannot run. Fallback: check from outside through the HTTP proxy, `curl -i https://POD_ID-8000.proxy.runpod.net/v1/models` (expect 401 without a key, 200 with `Authorization: Bearer $VLLM_API_KEY`).
+- **without a key** the API answers `401` (a `200` means the server is open to everyone: stop the Pod and check the Secret `VLLM_API_KEY`),
+- **with your `VLLM_API_KEY`** it answers `200` (a `401` means the server runs with a different key, for example an unresolved Secret placeholder after a mistyped secret name),
+- the served model is `glm-5.3-flash` with `max_model_len` 1048576 (a different model root only warns).
 
-The role reads `VLLM_API_KEY` from the shell environment and falls back to `/proc/1/environ`, because RunPod injects container env vars into PID 1 and SSH login shells often do not see them.
+It uses the Pod from `RUNPOD_POD_ID` or the ID you pass (`./scripts/check-endpoint.sh <POD_ID>`), never a stale `GLM_URL`. Exit codes: 0 all checks passed, 1 a check failed, 2 bad arguments, 3 the endpoint does not answer yet (still booting).
 
-The role checks the GPU, persistent caches, authenticated `/v1/models`, model ID and 1M max context. It also fails if `VLLM_API_KEY` is empty or still an unresolved `RUNPOD_SECRET_...` placeholder (e.g. after a mistyped secret name), because the API would otherwise run with a guessable key.
+**SSH is off by default:** a new Pod exposes only `8000/http`. `create-pod.sh --ssh` (or `CREATE_POD_SSH=1` for `start-any.sh`) also opens `22/tcp` and starts ssh. That needs SSH public keys registered in your RunPod account and an sshd in the container, which is not verified for this image, and it allows root login: use keys only.
 
 ## 14/5 scheduling
 
@@ -163,7 +161,7 @@ A stopped Pod keeps its machine assignment and resumes on the same host. If some
    Use `./scripts/gpu-availability.sh` beforehand; a create can still fail for capacity (exit code 5, nothing created).
 3. **Console migration (beta).** The RunPod console offers to migrate a stopped Pod to a machine with a free GPU. Their docs describe no API or CLI equivalent.
 
-Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run the Ansible verification.
+Redeploy and migration both produce a **new Pod ID, IP and proxy URL**. Afterwards update `RUNPOD_POD_ID` (local `.env`, GitHub secret) and `GLM_URL` (Claude Code), and re-run `check-endpoint.sh`.
 
 For the 14/5 schedule this means: stop/start is cheap but can fail overnight; terminate/recreate is robust against machine binding but can fail on B300 capacity and changes the Pod ID daily. Decide deliberately. If the GPU is taken at 05:00, the start is retried (see "Wait" above) for at most two hours; if it stays taken, the day is skipped (no attempt begins after the cap; one already running can finish about 2 minutes later).
 
@@ -268,7 +266,7 @@ set -a; source .env; set +a
 
 `start-when-free.sh` retries the start every 30 s for up to 1200 s (20 minutes) while the GPU is occupied and ends after the first successful start; the interval must be at least 30 s, and you do not call `pod-start.sh` separately. Because of the `&&`, the measurement only begins after a successful start and never if the start failed. For a single attempt without retries use `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh` instead. `wait-for-ready.sh` needs `VLLM_API_KEY` and `RUNPOD_POD_ID` (or `GLM_URL`) in your `.env`; without the key it aborts right after the Pod has already started and is billing. **A successful start bills the GPU.**
 
-`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; the API did update `startedAt` on a restart in the 2026-09-26 measurement, and your local clock must be accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
+`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; the API did update `startedAt` on a restart in the 2026-09-26 measurement, and your local clock must be accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` is a generous limit, not a measurement.
 
 ## License
 

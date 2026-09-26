@@ -36,13 +36,6 @@ for t in curl python3; do
   fi
 done
 
-# ansible is only needed for the optional verification step (README step 5).
-if command -v ansible-playbook >/dev/null 2>&1; then
-  ok "ansible-playbook: $(ansible-playbook --version 2>/dev/null | head -n1)"
-else
-  warn "ansible-playbook is not installed (only needed for the Ansible verification). Install: https://docs.ansible.com/ansible/latest/installation_guide/"
-fi
-
 echo
 echo "== Environment (values are never printed) =="
 if [ -n "${RUNPOD_API_KEY:-}" ]; then
@@ -67,16 +60,6 @@ if [ -n "${NETWORK_VOLUME_ID:-}" ]; then
   ok "NETWORK_VOLUME_ID is set"
 else
   warn "NETWORK_VOLUME_ID is not set (needed by create-pod.sh and start-any.sh to create Pods; put it in .env)"
-fi
-
-if [ -f "$ROOT/ansible/inventory.yml" ]; then
-  if grep -q 'REPLACE_WITH' "$ROOT/ansible/inventory.yml"; then
-    warn "ansible/inventory.yml still contains REPLACE_WITH_ placeholders"
-  else
-    ok "ansible/inventory.yml present"
-  fi
-else
-  warn "ansible/inventory.yml is missing (only needed for the Ansible verification)"
 fi
 
 if [ "$ONLINE" -eq 1 ]; then

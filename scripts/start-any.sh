@@ -22,7 +22,7 @@
 #   --dry-run    show the pool and what would be tried; start and create nothing
 #   --wait       afterwards run wait-for-ready.sh for the running Pod (measures the time to ready)
 # Environment: POOL_PREFIX (default glm-5.3-flash-b300), POOL_MAX (default 6), NETWORK_VOLUME_ID etc. as
-#   for create-pod.sh; READY_TIMEOUT (seconds, default 3600) for --wait
+#   for create-pod.sh (CREATE_POD_SSH=1 makes new Pods expose ssh); READY_TIMEOUT (seconds, default 3600) for --wait
 #
 # Only ONE start-any.sh (or create-pod.sh --yes) can run at a time on this machine (a lock in
 # $TMPDIR); a second one exits with code 4 and starts/creates nothing.

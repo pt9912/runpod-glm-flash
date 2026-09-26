@@ -61,13 +61,13 @@ Die Pod-Definition enthält nur RunPod-Secret-Referenzen (`{{ RUNPOD_SECRET_<nam
 ./scripts/pre-check.sh --online   # zusätzlich ein lesender API-Aufruf, um den Key zu prüfen
 ```
 
-Prüft, ob `curl` und `python3` installiert sind, ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a`) und ob `NETWORK_VOLUME_ID` gesetzt ist. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` und `ansible/inventory.yml` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
+Prüft, ob `curl` und `python3` installiert sind, ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a`) und ob `NETWORK_VOLUME_ID` gesetzt ist. `RUNPOD_POD_ID` und `VLLM_API_KEY` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
 
 ### Werkzeuge
 
-Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager. Optional: `ansible-playbook` für den Prüfschritt (<https://docs.ansible.com/ansible/latest/installation_guide/>).
+Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager.
 
-`runpodctl` wird von diesem Repo **nicht** gebraucht. Installiere es nur, wenn du es für andere Dinge willst, nach der Anleitung unter <https://docs.runpod.io/runpodctl/overview>. Ein sinnvoller Fall ist das Hinterlegen deines SSH-Public-Keys, den die Ansible-Prüfung braucht (`ssh-keygen -t ed25519`, dann entweder `~/.ssh/id_ed25519.pub` in das Feld SSH Public Keys deiner RunPod-Kontoeinstellungen einfügen oder `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` ausführen).
+`runpodctl` wird von diesem Repo **nicht** gebraucht. Installiere es nur, wenn du es für andere Dinge willst, nach der Anleitung unter <https://docs.runpod.io/runpodctl/overview>. Ein sinnvoller Fall ist das Hinterlegen deines SSH-Public-Keys, den du für einen mit `--ssh` angelegten Pod brauchst (`ssh-keygen -t ed25519`, dann entweder `~/.ssh/id_ed25519.pub` in das Feld SSH Public Keys deiner RunPod-Kontoeinstellungen einfügen oder `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` ausführen).
 
 ## 1. Schreibgeschützter REST-v2-Check
 
@@ -95,7 +95,7 @@ Standardmäßig läuft der Pod im Offline-Modus: Der Checkpoint wird auf dem Vol
 ./scripts/create-pod.sh
 ```
 
-Der Standard ist ein **Trockenlauf**: Es liest das Datacenter des Volumes, bricht ab, wenn schon ein Pod mit demselben Namen existiert, zeigt die vollständige Anfrage (nur RunPod-Secret-Referenzen, keine geheimen Werte) samt aktuellem Bestand und legt nichts an. Optionen: `--online` (Downloads erlaubt), `--no-ssh` (kein `22/tcp` und kein `startSsh`). Überschreibbar über die Umgebung: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
+Der Standard ist ein **Trockenlauf**: Es liest das Datacenter des Volumes, bricht ab, wenn schon ein Pod mit demselben Namen existiert, zeigt die vollständige Anfrage (nur RunPod-Secret-Referenzen, keine geheimen Werte) samt aktuellem Bestand und legt nichts an. Optionen: `--online` (Downloads erlaubt), `--ssh` (zusätzlich `22/tcp` und `startSsh`; standardmäßig aus). Überschreibbar über die Umgebung: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
 
 Prüfe die Anfrage: 1× B300, `mounts.network` mit deinem Volume auf `/workspace`, Port 8000, das Image, die vLLM-Argumente (1M-Kontext, MTP, `--max-num-seqs 6`) und dass `VLLM_API_KEY` eine `{{ RUNPOD_SECRET_... }}`-Referenz ist.
 
@@ -113,23 +113,21 @@ RUNPOD_POD_ID=<the new ID> ./scripts/pod-terminate.sh --yes
 
 `pod-terminate.sh` löscht einen Pod dauerhaft (ohne `--yes` zeigt es nur das Ziel); das Network Volume ist eine eigene Ressource und bleibt, Modell und Caches überleben also. `create-pod.sh` legt keinen zweiten Pod an, solange ein anderer Pod des Pools aktiv ist (`--force` hebt das auf) und nimmt eine Sperre, damit zwei Läufe auf demselben Rechner nicht gleichzeitig anlegen. Exit-Codes von `create-pod.sh`: 0 fertig, 1 Fehler oder gescheiterte Prüfung, 2 falsche Argumente, 3 ein Pod mit diesem Namen existiert oder ein Pool-Pod ist aktiv, 4 ein anderer Start/Anlegen läuft, 5 keine Kapazität (nichts angelegt; nur die Antwort „no instances available“ zählt als Kapazität, jedes andere HTTP 400 ist eine abgelehnte Anfrage). Jeden Pod kannst du später mit `./scripts/verify-pod.sh [POD_ID]` prüfen.
 
-## 5. Mit Ansible prüfen
+## 5. Den Endpunkt prüfen
 
 ```bash
-cd ansible
-cp inventory.example.yml inventory.yml
-$EDITOR inventory.yml
-ansible-playbook playbook.yml
-cd ..
+./scripts/check-endpoint.sh
 ```
 
-Sicherheitshinweis: Der Pod öffnet `22/tcp` mit Root-Login (`startSsh`), weil sich die Ansible-Rolle als `root` verbindet, und `ansible.cfg` setzt `host_key_checking = False`, weil sich die Host-Keys der Pods bei einem Redeploy ändern. Beides sind bewusste Kompromisse; nutze ausschließlich SSH-Keys und lege den Pod mit `create-pod.sh --no-ssh` an (kein `22/tcp`, kein `startSsh`), sobald du die Prüfung oder den Shell-Zugang nicht mehr brauchst.
+Sobald der Pod antwortet (`wait-for-ready.sh`), geht diese lesende Prüfung über den RunPod-HTTPS-Proxy und braucht kein SSH. Sie gibt nur Status, Modell-ID und Kontextlänge aus, nie einen Key. Sie prüft, dass:
 
-**Voraussetzungen für SSH (für dieses Setup ungeprüft):** Dein RunPod-Konto braucht hinterlegte SSH-Public-Keys (sie werden als `PUBLIC_KEY` eingespielt), und im Container muss tatsächlich ein sshd laufen. `docker_args` ersetzt den Startbefehl des Images durch `vllm serve`, und es ist nicht bekannt, ob das vLLM-Image openssh-server mitbringt oder startet. Antwortet Port 22 nicht, kann die Ansible-Rolle nicht laufen. Ausweg: von außen über den HTTP-Proxy prüfen, `curl -i https://POD_ID-8000.proxy.runpod.net/v1/models` (erwartet 401 ohne Key, 200 mit `Authorization: Bearer $VLLM_API_KEY`).
+- **ohne Key** die API `401` antwortet (ein `200` heißt, der Server ist für alle offen: Pod stoppen und das Secret `VLLM_API_KEY` prüfen),
+- **mit deinem `VLLM_API_KEY`** sie `200` antwortet (ein `401` heißt, der Server läuft mit einem anderen Key, etwa einem unaufgelösten Secret-Platzhalter nach einem falsch geschriebenen Secret-Namen),
+- das bediente Modell `glm-5.3-flash` mit `max_model_len` 1048576 ist (ein anderer Modell-Root warnt nur).
 
-Die Rolle liest `VLLM_API_KEY` aus der Shell-Umgebung und greift auf `/proc/1/environ` zurück, weil RunPod Container-Umgebungsvariablen in PID 1 einspielt und SSH-Login-Shells sie oft nicht sehen.
+Sie nimmt den Pod aus `RUNPOD_POD_ID` oder die übergebene ID (`./scripts/check-endpoint.sh <POD_ID>`), nie eine veraltete `GLM_URL`. Exit-Codes: 0 alle Prüfungen bestanden, 1 eine Prüfung ist fehlgeschlagen, 2 falsche Argumente, 3 der Endpunkt antwortet noch nicht (fährt noch hoch).
 
-Die Rolle prüft die GPU, die persistenten Caches, das authentifizierte `/v1/models`, die Modell-ID und den maximalen 1M-Kontext. Sie schlägt außerdem fehl, wenn `VLLM_API_KEY` leer oder noch ein nicht aufgelöster `RUNPOD_SECRET_...`-Platzhalter ist (z. B. nach einem falsch geschriebenen Secret-Namen), weil die API sonst mit einem erratbaren Key liefe.
+**SSH ist standardmäßig aus:** Ein neuer Pod öffnet nur `8000/http`. `create-pod.sh --ssh` (oder `CREATE_POD_SSH=1` für `start-any.sh`) öffnet zusätzlich `22/tcp` und startet ssh. Das braucht in deinem RunPod-Konto hinterlegte SSH-Public-Keys und einen sshd im Container, was für dieses Image nicht verifiziert ist, und es erlaubt Root-Login: nur mit Schlüsseln nutzen.
 
 ## 14/5-Zeitplan
 
@@ -163,7 +161,7 @@ Ein gestoppter Pod behält seine Maschinenzuordnung und läuft auf demselben Hos
    Nutze vorher `./scripts/gpu-availability.sh`; ein Anlegen kann trotzdem wegen fehlender Kapazität scheitern (Exit-Code 5, nichts angelegt).
 3. **Console-Migration (Beta).** Die RunPod-Console bietet an, einen gestoppten Pod auf eine Maschine mit freier GPU zu migrieren. Ihre Doku beschreibt kein Gegenstück für API oder CLI.
 
-Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`, GitHub-Secret) und `GLM_URL` (Claude Code) und führe die Ansible-Prüfung erneut aus.
+Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`, GitHub-Secret) und `GLM_URL` (Claude Code) und führe `check-endpoint.sh` erneut aus.
 
 Für den 14/5-Zeitplan heißt das: Stopp/Start ist billig, kann aber über Nacht scheitern; Beenden/Neuanlegen ist robust gegen die Maschinenbindung, kann aber an der B300-Kapazität scheitern und ändert die Pod-ID täglich. Entscheide das bewusst. Ist die GPU um 05:00 belegt, wird der Start wiederholt (siehe „Warten“ oben), höchstens zwei Stunden lang; bleibt sie belegt, entfällt der Tag (nach der Grenze beginnt kein Versuch mehr; ein bereits laufender kann etwa 2 Minuten später enden).
 
@@ -268,7 +266,7 @@ set -a; source .env; set +a
 
 `start-when-free.sh` wiederholt den Start alle 30 s bis zu 1200 s (20 Minuten), solange die GPU belegt ist, und endet nach dem ersten erfolgreichen Start; das Intervall muss mindestens 30 s betragen, und `pod-start.sh` rufst du nicht extra auf. Wegen des `&&` beginnt die Messung erst nach einem erfolgreichen Start und nie, wenn der Start gescheitert ist. Für einen einzelnen Versuch ohne Wiederholung nimm stattdessen `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh`. `wait-for-ready.sh` braucht `VLLM_API_KEY` und `RUNPOD_POD_ID` (oder `GLM_URL`) in deiner `.env`; ohne den Key bricht es ab, nachdem der Pod schon gestartet ist und abrechnet. **Ein erfolgreicher Start rechnet die GPU ab.**
 
-`wait-for-ready.sh` fragt `/v1/models` mit deinem `VLLM_API_KEY` ab (über `GLM_URL` oder `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), gibt die verstrichene Zeit aus und hängt sie an `.startup-times.log` an (git-ignoriert, mit `source=startedAt` oder `source=script`). Die Uhr startet bei `startedAt` des Pods aus der API (braucht `RUNPOD_API_KEY` und die Pod-ID aus der Proxy-URL oder `RUNPOD_POD_ID`), das Ergebnis hängt also nicht davon ab, wann du das Skript startest; die API hat `startedAt` bei einem Neustart in der Messung vom 2026-09-26 aktualisiert, und deine lokale Uhr muss stimmen. Andernfalls sagt das Skript das und zählt ab seinem eigenen Start. Die Auflösung ist das Abfrageintervall (standardmäßig 15 s). Es liest nur. Jede Antwort außer 200 und 401/403 zählt als „noch nicht bereit“ (der RunPod-Proxy antwortet 502/524, während der Container hochfährt; auch 404, 500 und Verbindungsfehler werden wiederholt); 401/403 bricht ab, weil sich der Key nicht von selbst korrigiert. Antwortet der Pod schon bei der ersten Abfrage, wird nichts protokolliert (er lief bereits); war er beim Start des Skripts schon `STARTING`, ist die protokollierte Zeit nur teilweise. `GLM_URL` darf auf `/v1` enden, das wird entfernt. `VLLM_ENGINE_READY_TIMEOUT_S=3600` und die Ansible-Wartezeit von 3600 s sind großzügige Grenzen, keine Messwerte.
+`wait-for-ready.sh` fragt `/v1/models` mit deinem `VLLM_API_KEY` ab (über `GLM_URL` oder `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), gibt die verstrichene Zeit aus und hängt sie an `.startup-times.log` an (git-ignoriert, mit `source=startedAt` oder `source=script`). Die Uhr startet bei `startedAt` des Pods aus der API (braucht `RUNPOD_API_KEY` und die Pod-ID aus der Proxy-URL oder `RUNPOD_POD_ID`), das Ergebnis hängt also nicht davon ab, wann du das Skript startest; die API hat `startedAt` bei einem Neustart in der Messung vom 2026-09-26 aktualisiert, und deine lokale Uhr muss stimmen. Andernfalls sagt das Skript das und zählt ab seinem eigenen Start. Die Auflösung ist das Abfrageintervall (standardmäßig 15 s). Es liest nur. Jede Antwort außer 200 und 401/403 zählt als „noch nicht bereit“ (der RunPod-Proxy antwortet 502/524, während der Container hochfährt; auch 404, 500 und Verbindungsfehler werden wiederholt); 401/403 bricht ab, weil sich der Key nicht von selbst korrigiert. Antwortet der Pod schon bei der ersten Abfrage, wird nichts protokolliert (er lief bereits); war er beim Start des Skripts schon `STARTING`, ist die protokollierte Zeit nur teilweise. `GLM_URL` darf auf `/v1` enden, das wird entfernt. `VLLM_ENGINE_READY_TIMEOUT_S=3600` ist eine großzügige Grenze, kein Messwert.
 
 ## Lizenz
 

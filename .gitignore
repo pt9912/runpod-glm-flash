@@ -20,11 +20,6 @@ crash.log
 vault.yml
 secrets.yml
 
-# Local Ansible inventory
-ansible/inventory.yml
-ansible/inventory.local.yml
-ansible/*.retry
-
 # Editor / OS
 .vscode/
 .idea/

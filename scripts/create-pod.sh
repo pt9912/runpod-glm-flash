@@ -7,15 +7,16 @@
 # DEFAULT IS A DRY RUN: it prints the request and creates nothing. Add --yes to create.
 # A created Pod BILLS the GPU at once (B300: about $7.89/h) until you stop or terminate it.
 #
-# Usage: create-pod.sh [--yes] [--online] [--no-ssh] [--force] [--terminate-on-fail]
+# Usage: create-pod.sh [--yes] [--online] [--ssh] [--force] [--terminate-on-fail]
 #   --yes      really create the Pod
 #   --force    create even if a Pod of the pool (name starts with POOL_PREFIX) is already running/active
 #              (default: refuse, because two pool Pods must never run at once)
 #   --terminate-on-fail   if the created Pod fails verification, terminate it (default: stop it and
 #              rename it to failed-<name>-<id>, which takes it out of the pool and keeps it for inspection)
 #   --online   allow model downloads: HF_HUB_OFFLINE is not set and the HF_TOKEN secret is injected
-#   --no-ssh   do not expose 22/tcp and do not start ssh (default: 22/tcp and startSsh, needs SSH keys
-#              registered in your RunPod account)
+#   --ssh      also expose 22/tcp and start ssh (default: off, only 8000/http is exposed). Needs SSH public
+#              keys registered in your RunPod account and an sshd in the image (not verified for this image).
+#              The environment variable CREATE_POD_SSH=1 does the same (start-any.sh passes it on).
 # Environment (all optional):
 #   NETWORK_VOLUME_ID   REQUIRED: the ID of your Network Volume (put it in .env)
 #   POD_NAME            default: glm-5.3-flash-b300
@@ -37,10 +38,11 @@ source "$HERE/_api.sh"
 # shellcheck source=scripts/_pool.sh
 source "$HERE/_pool.sh"
 
-YES=0; ONLINE=0; SSH=1; FORCE=0; TERMINATE_ON_FAIL=0
+YES=0; ONLINE=0; SSH=0; FORCE=0; TERMINATE_ON_FAIL=0
+[ "${CREATE_POD_SSH:-0}" != 1 ] || SSH=1
 for a in "$@"; do
   case "$a" in
-    --yes) YES=1 ;; --online) ONLINE=1 ;; --no-ssh) SSH=0 ;; --force) FORCE=1 ;; --terminate-on-fail) TERMINATE_ON_FAIL=1 ;;
+    --yes) YES=1 ;; --online) ONLINE=1 ;; --ssh) SSH=1 ;; --force) FORCE=1 ;; --terminate-on-fail) TERMINATE_ON_FAIL=1 ;;
     *) echo "unknown argument: $a (see the header of this script)" >&2; exit 2 ;;
   esac
 done
