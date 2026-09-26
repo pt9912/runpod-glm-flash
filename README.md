@@ -234,8 +234,9 @@ Values measured by the owner on the validated deployment (B300, `--safetensors-l
 | Model loading without `prefetch` | about 1128 s (18:48 min) |
 | Model loading with `prefetch` | about 216 s (3:36 min); the full prefetch took about 233 s |
 | FlashInfer autotune | about 3 min, only on the first run; the result is cached under `/workspace/vllm-cache` |
+| **Total: Pod start to the first `/v1/models` 200** | **609 s (10:09 min), ±15 s**; measured 2026-09-26 by polling every 15 s from the Pod's `startedAt` (new Pod on a different machine, model and `vllm-cache` already on the volume) |
 
-The total time from Pod start to the first successful `/v1/models` is **not measured yet**; it adds container start, compilation and warm-up to the loading time. Measure it with:
+The total was measured **once**, for a newly created Pod on a machine that had not run it before (so image and container setup are included, a download of the weights is not). It does not say how long a restart of a stopped Pod takes on its old machine (`pod-stop.sh`, then `pod-start.sh`); that can differ and is not measured yet. Measure it with:
 
 ```bash
 set -a; source .env; set +a
@@ -244,7 +245,7 @@ set -a; source .env; set +a
 
 `start-when-free.sh` retries the start every 30 s for up to 1200 s (20 minutes) while the GPU is occupied and ends after the first successful start; the interval must be at least 30 s, and you do not call `pod-start.sh` separately. Because of the `&&`, the measurement only begins after a successful start and never if the start failed. For a single attempt without retries use `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh` instead. `wait-for-ready.sh` needs `VLLM_API_KEY` and `RUNPOD_POD_ID` (or `GLM_URL`) in your `.env`; without the key it aborts right after the Pod has already started and is billing. **A successful start bills the GPU.**
 
-`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
+`wait-for-ready.sh` polls `/v1/models` with your `VLLM_API_KEY` (through `GLM_URL` or `https://$RUNPOD_POD_ID-8000.proxy.runpod.net`), prints the elapsed time and appends it to `.startup-times.log` (git-ignored, with `source=startedAt` or `source=script`). The clock starts at the Pod's `startedAt` from the API (needs `RUNPOD_API_KEY` and the Pod ID from the proxy URL or `RUNPOD_POD_ID`), so the result does not depend on when you launch the script; this assumes the API updates `startedAt` on every start and that your local clock is accurate. Otherwise it says so and counts from its own start. The resolution is the polling interval (15 s by default). It is read-only. Every answer except 200 and 401/403 counts as "not ready yet" (the RunPod proxy answers 502/524 while the container boots; 404, 500 and connection errors are retried too); 401/403 aborts, because the key will not fix itself. If the Pod already answers on the first poll, nothing is logged (it was already running); if it was already `STARTING` when you began, the logged time is only partial. `GLM_URL` may end in `/v1`, which is stripped. `VLLM_ENGINE_READY_TIMEOUT_S=3600` and the Ansible wait of 3600 s are generous limits, not measurements.
 
 ## License
 
