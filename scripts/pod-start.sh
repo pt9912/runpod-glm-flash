@@ -21,7 +21,7 @@ if [ "$rc" -ne 0 ]; then
   api_auth_hint "$info" && exit 1
   case "$(printf '%s' "$info" | head -n1)" in
     "HTTP 404"*)
-      echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID (a redeploy changes the Pod ID; see 'terraform output pod_id')." >&2
+      echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID (a redeploy changes the Pod ID; list the Pods with scripts/v2-smoke.sh)." >&2
       exit 1
       ;;
     *)
@@ -68,8 +68,7 @@ if [ "$rc" -ne 0 ]; then
 The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed).
 Options: wait and retry, or redeploy with the same volume; see README "If the GPU is occupied":
   - be notified when a B300 is free there: scripts/wait-for-gpu.sh B300 $dc_hint
-  - redeploy: (cd terraform && terraform apply -replace=runpod_pod.glm) if the Pod is in the Terraform
-    state, otherwise scripts/plan.sh and (cd terraform && terraform apply tfplan)
+  - redeploy with the same volume: scripts/create-pod.sh (dry run first, then --yes)
 A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
 HINT
       else

@@ -46,10 +46,10 @@ if command -v terraform >/dev/null 2>&1; then
   elif version_ge "$tf_ver" "$min_tf"; then
     ok "terraform $tf_ver (needs >= $min_tf)"
   else
-    fail "terraform $tf_ver is older than the required >= $min_tf. Update: https://developer.hashicorp.com/terraform/install"
+    warn "terraform $tf_ver is older than >= $min_tf (only the reference Terraform files need it). Update: https://developer.hashicorp.com/terraform/install"
   fi
 else
-  fail "terraform is not installed (needs >= $min_tf). Install: https://developer.hashicorp.com/terraform/install"
+  warn "terraform is not installed (not needed to create the Pod; only for the reference Terraform files, >= $min_tf). Install: https://developer.hashicorp.com/terraform/install"
 fi
 
 # ansible is only needed for the optional verification step (README step 5).
@@ -82,12 +82,12 @@ echo "== Files =="
 tfvars="$ROOT/terraform/terraform.tfvars"
 # Terraform also accepts TF_VAR_* and *.auto.tfvars; only complain when nothing is set up.
 alt_source=0
-if [ -n "${TF_VAR_network_volume_id:-}" ] || compgen -G "$ROOT/terraform/*.auto.tfvars" >/dev/null; then
+if [ -n "${NETWORK_VOLUME_ID:-}" ] || [ -n "${TF_VAR_network_volume_id:-}" ] || compgen -G "$ROOT/terraform/*.auto.tfvars" >/dev/null; then
   alt_source=1
 fi
 if [ ! -f "$tfvars" ]; then
   if [ "$alt_source" -eq 1 ]; then
-    ok "no terraform.tfvars, but variables come from TF_VAR_* / *.auto.tfvars"
+    ok "no terraform.tfvars, but the volume comes from NETWORK_VOLUME_ID / TF_VAR_* / *.auto.tfvars"
   else
     fail "terraform/terraform.tfvars is missing (cp terraform.tfvars.example terraform.tfvars)"
   fi
@@ -97,22 +97,12 @@ else
   if printf '%s\n' "$values" | grep -q 'REPLACE_WITH'; then
     fail "terraform/terraform.tfvars still contains REPLACE_WITH_ placeholders"
   elif ! printf '%s\n' "$values" | grep -q '^[[:space:]]*network_volume_id[[:space:]]*=' && [ "$alt_source" -eq 0 ]; then
-    warn "terraform/terraform.tfvars does not set network_volume_id (Terraform will ask for it)"
+    warn "terraform/terraform.tfvars does not set network_volume_id (create-pod.sh needs it or NETWORK_VOLUME_ID)"
   else
     ok "terraform/terraform.tfvars present, no placeholders"
   fi
 fi
 
-if [ -d "$ROOT/terraform/.terraform" ]; then
-  ok "terraform is initialised (.terraform present)"
-else
-  warn "terraform is not initialised yet (scripts/plan.sh runs terraform init)"
-fi
-if [ -f "$ROOT/terraform/.terraform.lock.hcl" ]; then
-  ok "terraform/.terraform.lock.hcl present"
-else
-  warn "terraform/.terraform.lock.hcl is missing (provider version not locked)"
-fi
 if [ -f "$ROOT/ansible/inventory.yml" ]; then
   if grep -q 'REPLACE_WITH' "$ROOT/ansible/inventory.yml"; then
     warn "ansible/inventory.yml still contains REPLACE_WITH_ placeholders"

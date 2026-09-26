@@ -61,7 +61,7 @@ while true; do
       printf '\a'
       echo "[$now] IN STOCK:"
       printf '%s\n' "$out"
-      echo "Next: scripts/pod-start.sh (restart the stopped Pod) or scripts/plan.sh and (cd terraform && terraform apply tfplan)."
+      echo "Next: scripts/pod-start.sh (restart the stopped Pod) or scripts/create-pod.sh --yes (dry run without --yes)."
       exit 0
       ;;
     2)

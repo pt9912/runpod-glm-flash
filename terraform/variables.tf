@@ -1,3 +1,9 @@
+variable "allow_unsafe_apply" {
+  description = "Safety lock. Provider runpod/runpod 1.0.8 silently drops gpu_type_id, ports, docker_args and start_ssh on create (observed 2026-09-26: an H100 Pod without vLLM arguments was created). Create the Pod with scripts/create-pod.sh instead. Set true only after verifying with a request capture that the provider sends these fields."
+  type        = bool
+  default     = false
+}
+
 variable "runpod_base_url" {
   description = "RunPod REST API v2 base URL used by the official provider."
   type        = string

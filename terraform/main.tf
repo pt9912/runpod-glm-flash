@@ -64,4 +64,11 @@ resource "runpod_pod" "glm" {
   env = [for k, v in local.env : "${k}=${v}"]
 
   docker_args = local.vllm_args
+
+  lifecycle {
+    precondition {
+      condition     = var.allow_unsafe_apply
+      error_message = "Blocked on purpose: provider runpod/runpod 1.0.8 silently drops gpu_type_id, ports, docker_args and start_ssh when creating a Pod (it created an H100 Pod without vLLM arguments). Create the Pod with scripts/create-pod.sh and check it with scripts/verify-pod.sh. Set allow_unsafe_apply = true only after a request capture shows the provider sends these fields."
+    }
+  }
 }

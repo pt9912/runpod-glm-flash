@@ -1,4 +1,6 @@
 # No secrets belong here.
+# NOTE: the Pod is created with scripts/create-pod.sh, not with Terraform (see the README);
+# only network_volume_id is read from this file by the scripts.
 network_volume_id = "REPLACE_WITH_EXISTING_NETWORK_VOLUME_ID"
 
 # Optional: pin a specific machine. Leave unset so RunPod picks any machine with a free B300.

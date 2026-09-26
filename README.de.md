@@ -8,8 +8,8 @@ Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofe
 
 ## Aktuelle Architektur
 
-- **Terraform:** offizieller Provider `runpod/runpod`, festgelegt auf `1.0.8` (`network_volume_id` braucht >= 1.0.6; 1.0.9 hat einen Schemafehler und lässt sich mit Terraform 1.14 nicht laden)
-- **API-Basis:** `https://api.runpod.io/v2` (Standard im Repo, **mit dem Provider ungetestet**, siehe „Wichtiger Hinweis zum Provider“)
+- **Pod-Anlage:** `scripts/create-pod.sh` (REST v2, direkt nach dem Anlegen geprüft). Die Terraform-Dateien beschreiben nur die vorgesehene Konfiguration: Der Provider `runpod/runpod` 1.0.8 verwirft Felder und darf nicht zum Anlegen des Pods benutzt werden (siehe „Wichtiger Hinweis zum Provider“)
+- **API-Basis:** `https://api.runpod.io/v2` (von allen Skripten verwendet)
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
 - **Image:** `vllm/vllm-openai:glm53-flash`
 - **Persistente Daten:** bestehendes Network Volume, eingehängt unter `/workspace`
@@ -19,17 +19,11 @@ Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofe
 - **Spec Decode:** MTP5
 - **Auth:** RunPod Secret → `VLLM_API_KEY`
 
-## Wichtiger Hinweis zum Provider
+## Wichtiger Hinweis zum Provider: den Pod nicht mit Terraform anlegen
 
-Der offizielle Provider (`runpod/runpod`, in der Terraform Registry veröffentlicht) ist **an REST API v1 ausgerichtet**: Sein Schema nennt als Standard-`base_url` `https://rest.runpod.io/v1`, und seine Pod-Felder (`image_name`, `docker_args`, `machine_id`, `network_volume_id`, `start_ssh`) sind v1-Namen. Die v2-API von RunPod verwendet einen anderen Body (`image`, `args`, `gpu{id,count}`, `mounts.network[{volumeId,path}]`, `dataCenterIds`) und kennt weder `machineId` noch `startSsh` noch `dockerArgs`.
+Der offizielle Provider `runpod/runpod` (1.0.8) ist an REST API v1 ausgerichtet. **Beobachtet am 2026-09-26: `terraform apply` hat einen falschen Pod angelegt** (eine H100 zu 3,49 $/h statt der B300, Port `8888/http` statt `8000/http`, keine vLLM-Argumente). Der Mitschnitt der Provider-Anfrage gegen einen lokalen Mock zeigte den Grund: Er sendet nur `name`, `cloudType`, `imageName`, `containerDiskInGb`, `gpuCount`, `env`, `networkVolumeId` und `volumeMountPath` und **verwirft stillschweigend `gpuTypeId`, `ports`, `dockerArgs` und `startSsh`**, mit der v1- wie mit der v2-Base-URL. `terraform plan` kann das nicht aufdecken, weil er zeigt, was Terraform vorhat, nicht was der Provider sendet. (Die Provider-Versionen 1.0.6 und 1.0.7 wurden nicht geprüft; 1.0.9 lässt sich mit Terraform 1.14 nicht laden.)
 
-Dieses Repo setzt `runpod_base_url` trotzdem standardmäßig auf die v2-URL. **Ob Provider 1.0.8 gegen `/v2` funktioniert, ist ungetestet.** Mögliche Folgen sind eine abgelehnte Anfrage (422/400) oder stillschweigend verworfene Felder wie `machine_id`/`start_ssh`. Vor dem ersten echten Apply:
-
-1. Den schreibgeschützten Smoke-Test und `terraform plan` ausführen (der Plan allein ruft die API nicht auf, um etwas anzulegen).
-2. Die Base-URL bewusst wählen: das native `https://rest.runpod.io/v1` des Providers (`runpod_base_url` in `terraform.tfvars` setzen; RunPod hat die Abschaltung von v1 angekündigt, also das aktuelle Datum prüfen) oder v2, geprüft mit einem Wegwerf-CPU-Pod.
-3. Im Plan und nach dem Apply in der Console die B300-Auswahl, das Anhängen des Network Volumes, `docker_args` (Quoting von `--speculative-config`), Ports und die Secret-Platzhalter prüfen.
-
-`machine_id` ist optional. Lass sie ungesetzt, dann wählt RunPod irgendeine Maschine mit freier B300 (Platzierung nach GPU-Typ und Datacenter des Network Volumes; die REST-v2-API selbst hat kein Maschinenfeld, und wie der Provider es abbildet, hängt von der API-Version ab, siehe oben). Nur festlegen, wenn es sein muss, und niemals raten. Eine festgelegte, belegte Maschine lässt den Apply fehlschlagen (siehe „Wenn die GPU belegt ist“).
+Deshalb wird der Pod mit `scripts/create-pod.sh` angelegt: Es ruft den dokumentierten REST-v2-Endpunkt mit ausdrücklich gesetzten Feldern auf und prüft das Ergebnis gleich danach mit `scripts/verify-pod.sh`. Die Terraform-Dateien bleiben als Beschreibung der vorgesehenen Konfiguration im Repo; wende sie **nicht** mit `terraform apply` an, solange nicht gezeigt ist, dass der Provider diese Felder sendet (mit einem Anfrage-Mitschnitt prüfen, nicht mit `plan`). Die Terraform-Pod-Ressource ist deshalb durch eine Vorbedingung gesperrt (`allow_unsafe_apply = false`): `plan` und `apply` schlagen mit einer Erklärung fehl, bis du die Sperre bewusst aufhebst.
 
 ## Secrets
 
@@ -49,7 +43,7 @@ $EDITOR .env
 set -a; source .env; set +a
 ```
 
-**Rechte des API-Keys:** Lesende Aufrufe (`v2-smoke.sh`, `gpu-availability.sh`, `pre-check.sh --online`) funktionieren mit einem Read-only-Key, aber `pod-start.sh`, `pod-stop.sh` und `terraform apply` brauchen Schreibzugriff auf Pods. Mit einem Read-only-Key oder einem zu eng eingeschränkten Key scheitern sie mit `HTTP 403` („Access to the requested resource was denied“). Das ist ein Rechteproblem, keine volle GPU. Lege in der RunPod-Console (Settings > API Keys) einen Key mit Schreibrecht an; RunPod empfiehlt eingeschränkte Keys mit den minimal nötigen Rechten. Beachte, dass `pre-check.sh --online` fehlendes Schreibrecht nicht erkennen kann, weil es nur liest.
+**Rechte des API-Keys:** Lesende Aufrufe (`v2-smoke.sh`, `gpu-availability.sh`, `pre-check.sh --online`) funktionieren mit einem Read-only-Key, aber `create-pod.sh`, `pod-start.sh`, `pod-stop.sh` und `pod-terminate.sh` brauchen Schreibzugriff auf Pods. Mit einem Read-only-Key oder einem zu eng eingeschränkten Key scheitern sie mit `HTTP 403` („Access to the requested resource was denied“). Das ist ein Rechteproblem, keine volle GPU. Lege in der RunPod-Console (Settings > API Keys) einen Key mit Schreibrecht an; RunPod empfiehlt eingeschränkte Keys mit den minimal nötigen Rechten. Beachte, dass `pre-check.sh --online` fehlendes Schreibrecht nicht erkennen kann, weil es nur liest.
 
 Diese beiden separat in der RunPod-Console anlegen:
 
@@ -67,11 +61,11 @@ Terraform sendet nur die Platzhalter-Strings der RunPod Secrets. Ersetze sie nie
 ./scripts/pre-check.sh --online   # zusätzlich ein lesender API-Aufruf, um den Key zu prüfen
 ```
 
-Prüft, ob `curl`, `python3` und `terraform` (Version aus `terraform/versions.tf`) installiert sind, ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a`) und ob `terraform.tfvars` vollständig ist. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` und `ansible/inventory.yml` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
+Prüft, ob `curl` und `python3` installiert sind (`terraform` erzeugt nur eine Warnung: Nur die Terraform-Referenzdateien brauchen es), ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a`) und ob `terraform.tfvars` vollständig ist. `ansible-playbook`, `RUNPOD_POD_ID`, `VLLM_API_KEY` und `ansible/inventory.yml` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
 
 ### Werkzeuge
 
-Erforderlich: `curl`, `python3` und `terraform` (>= die Version in `terraform/versions.tf`). Installiere sie mit deinem Paketmanager; für Terraform gilt die offizielle Anleitung unter <https://developer.hashicorp.com/terraform/install>. Optional: `ansible-playbook` für den Prüfschritt (<https://docs.ansible.com/ansible/latest/installation_guide/>).
+Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager. Optional: `ansible-playbook` für den Prüfschritt (<https://docs.ansible.com/ansible/latest/installation_guide/>) und `terraform` (<https://developer.hashicorp.com/terraform/install>), das nur die Terraform-Referenzdateien brauchen.
 
 `runpodctl` wird von diesem Repo **nicht** gebraucht. Installiere es nur, wenn du es für andere Dinge willst, nach der Anleitung unter <https://docs.runpod.io/runpodctl/overview>. Ein sinnvoller Fall ist das Hinterlegen deines SSH-Public-Keys, den die Ansible-Prüfung braucht (`ssh-keygen -t ed25519`, dann entweder `~/.ssh/id_ed25519.pub` in das Feld SSH Public Keys deiner RunPod-Kontoeinstellungen einfügen oder `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` ausführen).
 
@@ -85,34 +79,40 @@ Das führt ein GET gegen `/v2/pods` aus und legt keine GPU an. Es gibt pro Pod n
 
 ## 2. Konfigurieren
 
+Die ID des Network Volumes wird aus `terraform/terraform.tfvars` (`network_volume_id`, Vorlage: `terraform/terraform.tfvars.example`) oder aus der Umgebungsvariable `NETWORK_VOLUME_ID` gelesen:
+
 ```bash
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 $EDITOR terraform/terraform.tfvars
 ```
 
-Trage die ID des bestehenden Network Volumes ein. `machine_id` ist optional (siehe oben).
+Ein Network Volume ist an ein Datacenter gebunden, deshalb muss eine B300 **in diesem Datacenter** frei sein; eine freie B300 anderswo hilft nicht. `create-pod.sh` legt den Pod automatisch im Datacenter des Volumes an. Prüfe den Bestand vorher mit `./scripts/gpu-availability.sh B300 <DATACENTER>` (ohne Datacenter nimmt es das Datacenter des Pods `RUNPOD_POD_ID`, falls gesetzt, sonst den Gesamtbestand; mit `any` erzwingst du den Gesamtbestand). `B300` trifft den exakten GPU-Namen; die volle GPU-ID lautet `NVIDIA B300 SXM6 AC`, die du ebenfalls übergeben kannst. Trifft keine ID und kein Name exakt, listet das Skript alle GPUs auf, die den Text enthalten, und sagt das. Exit-Codes: 0 Bestand vorhanden, 2 kein Bestand, 4 unbekannter GPU-Typ oder unbekanntes Datacenter (Tippfehler), 1 API-Fehler.
 
-Ein Network Volume ist an ein Datacenter gebunden, deshalb muss eine B300 **in diesem Datacenter** frei sein; eine freie B300 anderswo hilft nicht. Prüfe den Bestand vorher mit `./scripts/gpu-availability.sh B300 <DATACENTER>` (ohne Datacenter nimmt es das Datacenter des Pods `RUNPOD_POD_ID`, falls gesetzt, sonst den Gesamtbestand; mit `any` erzwingst du den Gesamtbestand). `B300` trifft den exakten GPU-Namen; `gpu_type_id` nutzt die volle ID `NVIDIA B300 SXM6 AC`, die du ebenfalls übergeben kannst. Trifft keine ID und kein Name exakt, listet das Skript alle GPUs auf, die den Text enthalten, und sagt das. Exit-Codes: 0 Bestand vorhanden, 2 kein Bestand, 4 unbekannter GPU-Typ oder unbekanntes Datacenter (Tippfehler), 1 API-Fehler. Wenn du doch eine `machine_id` festlegst, muss sie im Datacenter des Volumes liegen.
+Standardmäßig läuft der Pod im Offline-Modus: Der Checkpoint wird auf dem Volume erwartet, `HF_HUB_OFFLINE=1` wird gesetzt und kein `HF_TOKEN` gesendet. Für ein frisches Setup oder einen erneuten Download `create-pod.sh --online` verwenden; dann sind Downloads erlaubt und das Secret `HF_TOKEN` wird eingespielt.
 
-`offline_mode` (Standard `true`) nimmt an, dass der Checkpoint schon auf dem Volume liegt: `HF_HUB_OFFLINE=1` wird gesetzt und kein `HF_TOKEN` gesendet. Für ein frisches Setup oder einen erneuten Download `offline_mode = false` setzen; dann sind Downloads erlaubt und das Secret `HF_TOKEN` wird eingespielt.
-
-## 3. Nur planen
+## 3. Trockenlauf
 
 ```bash
-./scripts/plan.sh
+./scripts/create-pod.sh
 ```
 
-`plan.sh` führt zuerst `scripts/pre-check.sh` aus (Werkzeuge, Umgebung, `terraform/terraform.tfvars` ohne `REPLACE_WITH_`-Platzhalter; Kommentare werden ignoriert, und Variablen aus `TF_VAR_*` oder `*.auto.tfvars` zählen ebenfalls); die Variablen `network_volume_id` und `machine_id` lehnen die Platzhalterwerte außerdem in Terraform selbst ab.
+Der Standard ist ein **Trockenlauf**: Es liest das Datacenter des Volumes, bricht ab, wenn schon ein Pod mit demselben Namen existiert, zeigt die vollständige Anfrage (nur RunPod-Secret-Referenzen, keine geheimen Werte) samt aktuellem Bestand und legt nichts an. Optionen: `--online` (Downloads erlaubt), `--no-ssh` (kein `22/tcp` und kein `startSsh`). Überschreibbar über die Umgebung: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
 
-Der Plan wird in `terraform/tfplan` gespeichert, damit genau der geprüfte Plan angewendet wird. Prüfe den gesamten Plan. Achte auf Secure Cloud, B300, eine GPU, 50 GB Container-Disk, das bestehende Network Volume auf `/workspace`, das Image, die 1M/MTP5-Argumente, Port 8000 und darauf, dass keine Klartext-Secrets vorkommen.
+Prüfe die Anfrage: 1× B300, `mounts.network` mit deinem Volume auf `/workspace`, Port 8000, das Image, die vLLM-Argumente (1M-Kontext, MTP, `--max-num-seqs 6`) und dass `VLLM_API_KEY` eine `{{ RUNPOD_SECRET_... }}`-Referenz ist.
 
-## 4. Bewusst anwenden
+## 4. Den Pod anlegen
 
 ```bash
-(cd terraform && terraform apply tfplan)
+./scripts/create-pod.sh --yes
 ```
 
-Das ist der erste Schritt, der abrechnungspflichtige B300-Rechenzeit starten kann. Es gibt absichtlich kein automatisches Apply-Skript.
+Das ist der Schritt, der abrechnungspflichtige B300-Rechenzeit startet (etwa 7,89 $/h). Das Skript wiederholt nie eine Anfrage, die womöglich gesendet wurde. Danach führt es `scripts/verify-pod.sh` aus (nur lesend): 1× B300, das Volume auf `/workspace`, Port 8000, `VLLM_API_KEY` als Secret-Referenz (nie leer, nie ein Klartextwert), die Caches auf `/workspace` und die wichtigen vLLM-Argumente; es gibt nur Namen von Env-Variablen aus, nie Werte. Bei Erfolg trägst du die ausgegebene Pod-ID als `RUNPOD_POD_ID` in die `.env` ein. Schlägt die Prüfung fehl, rechnet der Pod ab und ist falsch; beende ihn sofort:
+
+```bash
+RUNPOD_POD_ID=<the new ID> ./scripts/pod-terminate.sh --yes
+```
+
+`pod-terminate.sh` löscht den Pod dauerhaft (ohne `--yes` zeigt es nur das Ziel); das Network Volume ist eine eigene Ressource und bleibt, Modell und Caches überleben also. Exit-Codes von `create-pod.sh`: 0 fertig, 1 Fehler oder gescheiterte Prüfung, 2 falsche Argumente, 3 ein Pod mit diesem Namen existiert schon, 5 keine Kapazität (nichts angelegt). Jeden Pod kannst du später mit `./scripts/verify-pod.sh [POD_ID]` prüfen.
 
 ## 5. Mit Ansible prüfen
 
@@ -124,7 +124,7 @@ ansible-playbook playbook.yml
 cd ..
 ```
 
-Sicherheitshinweis: Der Pod öffnet `22/tcp` mit Root-Login (`start_ssh = true`), weil sich die Ansible-Rolle als `root` verbindet, und `ansible.cfg` setzt `host_key_checking = False`, weil sich die Host-Keys der Pods bei einem Redeploy ändern. Beides sind bewusste Kompromisse; nutze ausschließlich SSH-Keys und entferne `22/tcp` aus `ports` in `terraform/main.tf`, sobald du die Prüfung oder den Shell-Zugang nicht mehr brauchst.
+Sicherheitshinweis: Der Pod öffnet `22/tcp` mit Root-Login (`startSsh`), weil sich die Ansible-Rolle als `root` verbindet, und `ansible.cfg` setzt `host_key_checking = False`, weil sich die Host-Keys der Pods bei einem Redeploy ändern. Beides sind bewusste Kompromisse; nutze ausschließlich SSH-Keys und lege den Pod mit `create-pod.sh --no-ssh` an (kein `22/tcp`, kein `startSsh`), sobald du die Prüfung oder den Shell-Zugang nicht mehr brauchst.
 
 **Voraussetzungen für SSH (für dieses Setup ungeprüft):** Dein RunPod-Konto braucht hinterlegte SSH-Public-Keys (sie werden als `PUBLIC_KEY` eingespielt), und im Container muss tatsächlich ein sshd laufen. `docker_args` ersetzt den Startbefehl des Images durch `vllm serve`, und es ist nicht bekannt, ob das vLLM-Image openssh-server mitbringt oder startet. Antwortet Port 22 nicht, kann die Ansible-Rolle nicht laufen. Ausweg: von außen über den HTTP-Proxy prüfen, `curl -i https://POD_ID-8000.proxy.runpod.net/v1/models` (erwartet 401 ohne Key, 200 mit `Authorization: Bearer $VLLM_API_KEY`).
 
@@ -154,28 +154,24 @@ Alle API-Aufrufe haben Zeitlimits (10 s Verbindungsaufbau, 60 s gesamt; übersch
 Ein gestoppter Pod behält seine Maschinenzuordnung und läuft auf demselben Host wieder an. Mietet in der Zwischenzeit jemand anderes die GPU, kann `pod start` nicht gelingen. Beobachtet am 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; in diesem Fall wird nichts gestartet oder abgerechnet. Die RunPod-Doku beschreibt drei Wege:
 
 1. **Warten.** Die GPU wird frei, sobald der andere Nutzer seinen Pod stoppt. `./scripts/start-when-free.sh [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (Standard 7200 s, 60 s) wiederholt den eigentlichen Start, solange die GPU belegt ist, und endet nach einem Erfolg oder an der Grenze. Das ist das richtige Werkzeug für einen gestoppten Pod: Er läuft auf seiner eigenen Maschine wieder an, über die der Katalogbestand nichts aussagt, und ein fehlgeschlagener Versuch kostet nichts. `pod-start.sh` liefert Exit-Code 5 für „GPU belegt“ und 6 für „Pod nicht lesbar, nichts gesendet“ (bis zu 10-mal hintereinander wiederholt); jeder andere Fehler bricht sofort ab, damit ein womöglich gestarteter Pod nie doppelt gestartet wird. Ein Abbruch des Laufs stoppt den laufenden Versuch, aber eine bereits gesendete Start-Anfrage lässt sich nicht zurücknehmen (das Skript sagt dann, dass du `scripts/v2-smoke.sh` prüfen sollst). **Ein erfolgreicher Start rechnet die GPU ab.** Willst du nur benachrichtigt werden und nicht starten, fragt `./scripts/wait-for-gpu.sh B300` (nimmt das Datacenter deines Pods aus `RUNPOD_POD_ID`; ein anderes nennst du ausdrücklich, mit `any` gilt der Gesamtbestand) den Bestand schreibgeschützt alle 60 s ab und läutet die Terminal-Glocke, sobald die GPU verfügbar ist; es startet nie etwas (ein Tippfehler bei GPU oder Datacenter bricht mit Exit 4 ab, statt ewig zu warten). Der Bestand ändert sich innerhalb von Minuten, handle also sofort und rechne damit, dass ein Start trotzdem scheitern kann.
-2. **Redeploy (empfohlen mit einem Network Volume).** Den Pod beenden und einen neuen anlegen, der dasselbe Volume anhängt; `/workspace` (Modell, HF- und vLLM-Caches) bleibt unberührt. Ist `machine_id` ungesetzt, sollte RunPod irgendeine Maschine mit freier B300 im Datacenter des Volumes wählen (im ersten Plan/Apply bestätigen):
+2. **Redeploy (empfohlen mit einem Network Volume).** Einen neuen Pod anlegen, der dasselbe Volume anhängt; `/workspace` (Modell, HF- und vLLM-Caches) bleibt unberührt, und laut RunPod-Doku kann ein Network Volume an mehrere Pods angehängt werden, der gestoppte Pod muss also nicht zuerst beendet werden. RunPod wählt eine Maschine mit freier B300 im Datacenter des Volumes:
 
    ```bash
-   (cd terraform && terraform state list)    # ist runpod_pod.glm im State?
-   (cd terraform && terraform apply -replace=runpod_pod.glm)   # ja: ersetzen
-   ./scripts/plan.sh && (cd terraform && terraform apply tfplan)   # nein (z. B. Pod außerhalb von Terraform angelegt): normaler Plan und Apply
+   ./scripts/create-pod.sh          # Trockenlauf
+   ./scripts/create-pod.sh --yes    # legt an und prüft (rechnet die GPU ab)
    ```
 
-   Nutze vorher `./scripts/gpu-availability.sh`; ein Anlegen kann trotzdem wegen fehlender Kapazität scheitern.
+   Nutze vorher `./scripts/gpu-availability.sh`; ein Anlegen kann trotzdem wegen fehlender Kapazität scheitern (Exit-Code 5, nichts angelegt).
 3. **Console-Migration (Beta).** Die RunPod-Console bietet an, einen gestoppten Pod auf eine Maschine mit freier GPU zu migrieren. Ihre Doku beschreibt kein Gegenstück für API, CLI oder Terraform.
 
-Nach `pod-stop.sh` steht der Pod auf `EXITED`, während der Terraform-State noch „läuft“ sagt; führe nach einem Stopp/Start kein `terraform apply` blind aus, sondern lies zuerst den Plan (ob ein Stopp ein vorgeschlagenes Update oder Replacement auslöst, ist ungetestet).
-
-Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`, GitHub-Secret) und `GLM_URL` (Claude Code) und führe die Ansible-Prüfung erneut aus. Der Terraform-State folgt einem Redeploy über `-replace`, aber keiner Console-Migration; nach einer Migration ist die alte Ressource veraltet.
+Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`, GitHub-Secret) und `GLM_URL` (Claude Code) und führe die Ansible-Prüfung erneut aus.
 
 Für den 14/5-Zeitplan heißt das: Stopp/Start ist billig, kann aber über Nacht scheitern; Beenden/Neuanlegen ist robust gegen die Maschinenbindung, kann aber an der B300-Kapazität scheitern und ändert die Pod-ID täglich. Entscheide das bewusst. Ist die GPU um 05:00 belegt, wird der Start wiederholt (siehe „Warten“ oben), höchstens zwei Stunden lang; bleibt sie belegt, entfällt der Tag (nach der Grenze beginnt kein Versuch mehr; ein bereits laufender kann etwa 2 Minuten später enden).
 
 ## Kosten stoppen
 
 - `pod-stop.sh` beendet die GPU-Abrechnung. Laut RunPod-Preisdoku wird ein gestoppter Pod nicht für seine Container-Disk berechnet (nur für eine Pod-lokale Volume-Disk, zu einem höheren Satz); das Network Volume wird getrennt abgerechnet (etwa 0,07 $/GB/Monat), egal ob ein Pod läuft.
-- `terraform destroy` (aus `terraform/`) beendet den Pod und entfernt ihn aus dem State. Es löscht das Network Volume **nicht**, das hier nicht verwaltet wird, Modell und Caches bleiben also erhalten.
-- `terraform apply -replace=runpod_pod.glm` zerstört zuerst und legt dann neu an: Fehlt in diesem Moment B300-Kapazität, bleibst du ohne Pod.
+- `pod-terminate.sh --yes` löscht einen Pod dauerhaft. Es löscht das Network Volume **nicht**, Modell und Caches bleiben also erhalten.
 
 ## Optional: Runpod-MCP-Server
 
