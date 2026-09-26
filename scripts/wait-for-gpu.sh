@@ -5,8 +5,10 @@
 # can still fail.
 #
 # Usage: wait-for-gpu.sh [GPU_MATCH] [DATACENTER_ID] [INTERVAL_SECONDS] [TIMEOUT_SECONDS]
-#   defaults: B300, any datacenter, 60 s, 0 (= wait until Ctrl-C)
-# Example (your volume lives in EU-NL-1): wait-for-gpu.sh B300 EU-NL-1
+#   defaults: B300, the datacenter of the Pod RUNPOD_POD_ID (overall stock if that is not set or
+#             cannot be read), 60 s, 0 (= wait until Ctrl-C). DATACENTER_ID "any" = overall stock.
+# Example: wait-for-gpu.sh B300            (datacenter taken from RUNPOD_POD_ID)
+#          wait-for-gpu.sh B300 EU-NL-1    (explicit datacenter)
 #
 # Exit codes: 0 = in stock, 3 = timeout, 4 = unknown GPU type or datacenter (typo),
 # 1 = the API kept failing for 5 minutes (WAIT_MAX_ERROR_SECONDS) or the key was rejected (401/403),
@@ -27,13 +29,29 @@ INTERVAL=$((10#$INTERVAL)); TIMEOUT=$((10#$TIMEOUT)); MAX_ERR=$((10#$MAX_ERR))  
 HERE="$(dirname "$0")"
 # shellcheck source=scripts/_api.sh
 source "$HERE/_api.sh"   # for api_auth_hint
+
+# Resolve the datacenter once (not on every poll): explicit, "any", or the Pod's own one.
+dc_lc="$(printf '%s' "$DC" | tr '[:upper:]' '[:lower:]')"
+if [ "$dc_lc" = "any" ]; then
+  DC=""
+elif [ -z "$DC" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+  pod_dc="$(api_pod_datacenter "$RUNPOD_POD_ID")"
+  if [ "$pod_dc" != "?" ]; then
+    DC="$pod_dc"
+    echo "Datacenter: $DC (of Pod $RUNPOD_POD_ID; pass 'any' as the datacenter for the overall stock)"
+  else
+    echo "Note: could not read the datacenter of Pod $RUNPOD_POD_ID; watching the overall stock." >&2
+  fi
+fi
+
 start=$SECONDS
 first_error=""
-echo "Waiting for ${MATCH}${DC:+ in $DC} (every ${INTERVAL}s, timeout: $([ "$TIMEOUT" -gt 0 ] && echo "${TIMEOUT}s" || echo none)). Read-only, Ctrl-C to stop."
+where=" (overall stock, any datacenter)"; [ -z "$DC" ] || where=" in $DC"
+echo "Waiting for ${MATCH}${where} (every ${INTERVAL}s, timeout: $([ "$TIMEOUT" -gt 0 ] && echo "${TIMEOUT}s" || echo none)). Read-only, Ctrl-C to stop."
 
 while true; do
   set +e
-  out="$("$HERE/gpu-availability.sh" "$MATCH" ${DC:+"$DC"} 2>&1)"
+  out="$("$HERE/gpu-availability.sh" "$MATCH" "${DC:-any}" 2>&1)"
   rc=$?
   set -e
   now="$(date +%H:%M:%S)"

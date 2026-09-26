@@ -6,7 +6,9 @@
 # Usage: gpu-availability.sh [GPU_MATCH] [DATACENTER_ID]
 #   GPU_MATCH      case-insensitive GPU id/name (default: B300); an exact id/name match wins,
 #                  otherwise every GPU containing the text matches
-#   DATACENTER_ID  only report this datacenter (e.g. the one your volume lives in)
+#   DATACENTER_ID  only report this datacenter. Default: the datacenter of the Pod
+#                  RUNPOD_POD_ID if that variable is set, otherwise the overall stock.
+#                  "any" always means the overall stock (all datacenters).
 #
 # Exit codes: 0 = in stock (in the given datacenter, if any), 2 = known GPU but no
 # stock, 4 = unknown GPU type or datacenter (typo?), 1 = API/transport error.
@@ -17,6 +19,21 @@ source "$(dirname "$0")/_api.sh"
 
 MATCH="${1:-B300}"
 DC="${2:-}"
+
+# Datacenter: explicit value, "any" (= overall stock), or by default the Pod's own one
+# (the Network Volume is bound to it, so stock elsewhere does not help).
+dc_lc="$(printf '%s' "$DC" | tr '[:upper:]' '[:lower:]')"
+if [ "$dc_lc" = "any" ]; then
+  DC=""
+elif [ -z "$DC" ] && [ -n "${RUNPOD_POD_ID:-}" ]; then
+  pod_dc="$(api_pod_datacenter "$RUNPOD_POD_ID")"
+  if [ "$pod_dc" != "?" ]; then
+    DC="$pod_dc"
+    echo "Datacenter: $DC (of Pod $RUNPOD_POD_ID; pass 'any' as the datacenter for the overall stock)" >&2
+  else
+    echo "Note: could not read the datacenter of Pod $RUNPOD_POD_ID; showing the overall stock." >&2
+  fi
+fi
 
 # A datacenter that does not exist would look like "no stock"; reject it as a typo.
 if [ -n "$DC" ]; then

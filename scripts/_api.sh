@@ -83,6 +83,15 @@ print("\t".join(field(k) for k in ("name", "status", "cost", "dataCenterId")))
 '
 }
 
+# api_pod_datacenter ID: print the Pod's datacenter id, or "?" if it cannot be determined
+# (Pod unknown, API error, field missing). Never fails.
+api_pod_datacenter() {
+  local info name status cost dc
+  info="$(api_pod_info "$1" 2>/dev/null)" || { echo "?"; return 0; }
+  IFS=$'\t' read -r name status cost dc <<<"$info"
+  echo "${dc:-?}"
+}
+
 # api_print_pod: read a 2xx action response on stdin and print id and status only.
 # Parses defensively: the success body shape of the action endpoint is unverified,
 # and an accepted action must never be reported as a failure.
