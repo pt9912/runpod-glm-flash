@@ -17,7 +17,8 @@
 #              The environment variable CREATE_POD_SSH=1 does the same (start-any.sh passes it on).
 # Environment (all optional):
 #   NETWORK_VOLUME_ID   REQUIRED: the ID of your Network Volume (put it in .env)
-#   POD_NAME            default: glm-5.3-flash-b300
+#   POD_NAME            default: glm-5.3-flash-b300; must start with POOL_PREFIX (else no pool guard
+#                        ever sees it), unless --force
 #   GPU_ID              default: NVIDIA B300 SXM6 AC
 #   DATACENTER          default: the datacenter of the Network Volume (required to place the Pod there)
 #   VLLM_SECRET_NAME / HF_SECRET_NAME   RunPod Secret names (defaults VLLM_API_KEY / HF_TOKEN)
@@ -53,6 +54,16 @@ POD_NAME="${POD_NAME:-glm-5.3-flash-b300}"
 GPU_ID="${GPU_ID:-NVIDIA B300 SXM6 AC}"
 DISK="${CONTAINER_DISK_GB:-50}"
 case "$DISK" in ''|*[!0-9]*) echo "CONTAINER_DISK_GB must be a whole number" >&2; exit 2 ;; esac
+case "$POD_NAME" in
+  "$POOL_PREFIX"*) ;;
+  *)
+    if [ "$FORCE" -ne 1 ]; then
+      echo "POD_NAME '$POD_NAME' does not start with POOL_PREFIX ('$POOL_PREFIX'): every pool guard (start-any.sh, stop-any.sh, pod-start.sh) would never see this Pod, so a second one could be started or created alongside it. Use a name starting with '$POOL_PREFIX', or pass --force to create it anyway." >&2
+      exit 2
+    fi
+    echo "Note: POD_NAME '$POD_NAME' does not start with POOL_PREFIX ('$POOL_PREFIX'); pool guards will never see this Pod (--force)." >&2
+    ;;
+esac
 
 # 1. The Pod must be placed in the volume's datacenter.
 DC="${DATACENTER:-}"
@@ -196,6 +207,10 @@ if [ "$vrc" -ne 1 ]; then
 fi
 
 # ---- verification FAILED: the Pod is wrong and billing. Clean up, every step retried.
+# A signal from here on (for example start-any.sh forwarding a SIGTERM) must not interrupt the
+# cleanup half-done: that could leave the Pod billing under its pool name, invisible to no guard
+# but restartable by accident. Nothing below blocks for long, so this is a short-lived trap.
+trap '' INT TERM HUP
 echo >&2
 echo "VERIFICATION FAILED: Pod $new_id is not what was intended, and it is billing." >&2
 TRIES="${CLEANUP_TRIES:-3}"; DELAY="${CLEANUP_DELAY:-2}"
@@ -204,7 +219,7 @@ retry() {   # retry CMD...: up to TRIES attempts, DELAY seconds apart
   while :; do
     "$@" >/dev/null 2>&1 && return 0
     [ "$i" -lt "$TRIES" ] || return 1
-    i=$((i + 1)); sleep "$DELAY"
+    i=$((i + 1)); sleep "$DELAY" 8>&- 9>&-   # fd 8/9: never hold the lock through a sleep
   done
 }
 do_action() { retry api_post "/pods/$new_id/action" "{\"action\":\"$1\"}"; }
@@ -217,7 +232,12 @@ if [ "$TERMINATE_ON_FAIL" -eq 1 ]; then
 fi
 if [ "$terminated" -eq 0 ]; then
   do_action stop && stopped=1          # ends the GPU billing
-  do_rename && renamed=1               # takes it out of the pool (the name no longer starts with the prefix)
+  if [ "$stopped" -eq 1 ]; then
+    # Only rename after a CONFIRMED stop: a rename before that would take the Pod out of every
+    # pool guard's sight while it keeps running and billing, and a second start-any.sh could then
+    # create a duplicate right next to it.
+    do_rename && renamed=1             # takes it out of the pool (the name no longer starts with the prefix)
+  fi
   if [ "$stopped" -eq 0 ] || [ "$renamed" -eq 0 ]; then
     do_action terminate && terminated=1   # fallback: never leave a wrong Pod billing or restartable
   fi
@@ -231,8 +251,6 @@ if [ "$terminated" -eq 1 ]; then
   fi
 elif [ "$stopped" -eq 1 ] && [ "$renamed" -eq 1 ]; then
   echo "It was STOPPED (billing ended) and renamed to '$failed_name', so it is no longer part of the pool. Inspect it, then remove it: $cmd" >&2
-elif [ "$stopped" -eq 0 ] && [ "$renamed" -eq 1 ]; then
-  echo "It was renamed to '$failed_name' (out of the pool), but STOPPING AND TERMINATING FAILED: it is STILL BILLING. Run: $cmd" >&2
 elif [ "$stopped" -eq 1 ]; then
   echo "It was stopped, but RENAMING AND TERMINATING FAILED: it still carries the pool name and could be restarted by start-any.sh. Run: $cmd" >&2
 else

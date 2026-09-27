@@ -1,4 +1,4 @@
-# Local Terraform files (never commit state or variables)
+# Local Terraform leftovers (Terraform itself was removed, see the README; never commit state or variables)
 .terraform/
 *.tfstate
 *.tfstate.*
@@ -7,6 +7,13 @@
 tfplan
 *.tfplan
 crash.log
+
+# Local Ansible leftovers (Ansible itself was removed; never commit vault/secrets)
+*.vault
+vault.yml
+secrets.yml
+
+# Local measurement log (see the README "Startup times")
 .startup-times.log
 
 # Secrets / environment
@@ -16,9 +23,6 @@ crash.log
 .envrc
 *.pem
 *.key
-*.vault
-vault.yml
-secrets.yml
 
 # Editor / OS
 .vscode/

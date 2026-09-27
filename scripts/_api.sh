@@ -14,7 +14,9 @@ _api_request() {
   if [ -n "$data" ]; then
     args+=(-H 'Content-Type: application/json' -d "$data")
   fi
-  if ! resp="$(curl "${args[@]}" --config - "${BASE%/}${path}" <<EOT
+  # fd 8/9 closed: curl must never inherit a copy of the pool lock (see _pool.sh). Harmless if
+  # neither is open (most scripts never hold the lock).
+  if ! resp="$(curl "${args[@]}" --config - "${BASE%/}${path}" 8>&- 9>&- <<EOT
 header = "Authorization: Bearer ${RUNPOD_API_KEY}"
 EOT
   )"; then

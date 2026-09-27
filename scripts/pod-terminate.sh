@@ -20,6 +20,7 @@ for a in "$@"; do
 done
 POD_ID="${POD_ID:-${RUNPOD_POD_ID:-}}"
 [ -n "$POD_ID" ] || { echo "Give a POD_ID or set RUNPOD_POD_ID" >&2; exit 2; }
+case "$POD_ID" in *[!a-z0-9]*) echo "Invalid Pod ID '$POD_ID' (expected lower-case letters and digits)" >&2; exit 2 ;; esac
 
 set +e
 info="$(api_pod_info "$POD_ID" 2>&1)"

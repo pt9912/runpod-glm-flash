@@ -16,9 +16,9 @@
 #
 # Usage: start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]
 #   MAX_WAIT_SECONDS  attempts begin for at most this long (default 1200). An attempt already running
-#                     is not cut off: each pool Pod tried costs up to two API calls of up to 60 s, so
+#                     is not cut off: each pool Pod tried costs up to three API calls of up to 60 s, so
 #                     the last round can end minutes later with many Pods.   INTERVAL_SECONDS  between
-#                     rounds, >= 30 (default 30); a round makes about 5 + 2N API calls (N = stopped Pods)
+#                     rounds, >= 30 (default 30); a round makes about 5 + 3N API calls (N = stopped Pods)
 #   --no-create  only start existing Pods, never create one
 #   --dry-run    show the pool and what would be tried; start and create nothing
 #   --wait       afterwards run wait-for-ready.sh for the running Pod (measures the time to ready)
@@ -74,7 +74,7 @@ run_child() {
   set -m
   # stdin closed: a child must never eat the lines of the loop that calls us; fd 9 closed: a child (or
   # anything it leaves running) must never keep the lock alive after this script is gone.
-  "$@" >"$tmp" 2>&1 </dev/null 9>&- &
+  "$@" >"$tmp" 2>&1 </dev/null 8>&- 9>&- &
   child=$!
   set +m
   wait "$child"; RC=$?; child=""
@@ -89,7 +89,7 @@ finish() {   # finish ID NAME HOW
   if [ "$WAIT" -eq 1 ]; then
     # A GLM_URL exported from .env would point at another Pod and take precedence: drop it, use this Pod.
     # In the background, so that a SIGTERM to this script is handled at once instead of after the wait.
-    env -u GLM_URL RUNPOD_POD_ID="$1" "$HERE/wait-for-ready.sh" "${READY_TIMEOUT:-3600}" 10 9>&- &
+    env -u GLM_URL RUNPOD_POD_ID="$1" "$HERE/wait-for-ready.sh" "${READY_TIMEOUT:-3600}" 10 8>&- 9>&- &
     child=$!
     wait "$child"; wrc=$?
     child=""
@@ -151,6 +151,7 @@ while true; do
         0) finish "$id" "$name" "(restarted)" ;;
         5) echo "[$(date +%H:%M:%S)] round $attempt: '$name' ($id): its machine is occupied" ;;
         6) echo "[$(date +%H:%M:%S)] round $attempt: '$name' ($id): could not be read, skipped" ;;
+        8) printf '%s\n' "$OUT" >&2; echo "[$(date +%H:%M:%S)] round $attempt: '$name' ($id): rejected (nothing sent or changed), skipped" ;;
         *) printf '%s\n' "$OUT" >&2; echo "Starting '$name' ($id) failed (exit $RC); stopping, nothing else is tried." >&2; exit "$RC" ;;
       esac
     done < <(pool_candidates)
@@ -199,5 +200,5 @@ while true; do
   remaining=$((MAX_WAIT - (SECONDS - start)))
   [ "$remaining" -gt 0 ] || continue   # the loop head gives up
   nap="$INTERVAL"; [ "$remaining" -ge "$nap" ] || nap="$remaining"
-  sleep "$nap"
+  sleep "$nap" 8>&- 9>&-   # fd 8/9: never hold the lock through a sleep, so a kill frees it at once
 done

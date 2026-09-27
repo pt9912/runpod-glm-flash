@@ -2,16 +2,21 @@
 # Starts the stopped Pod RUNPOD_POD_ID (this bills the GPU from the moment it runs).
 # Usage: pod-start.sh [--force]        (POD_START_FORCE=1 does the same)
 # A Pod of the pool (name starts with POOL_PREFIX) is NOT started while another pool Pod is active:
-# two pool Pods must not run at once (they share /workspace/vllm-cache and would bill twice).
-# --force overrides that check.
-# Exit codes: 0 = started or already running, 1 = failure (auth, unknown Pod, unknown
-# outcome, ...), 3 = refused: another pool Pod is active (nothing sent), 5 = the GPU on the
-# Pod's machine is occupied (nothing started, nothing billed; safe to retry, see
-# scripts/start-when-free.sh), 6 = the Pod or the pool could not be read (timeout, 5xx, 429...):
-# nothing was sent, safe to retry, 2 = bad arguments.
+# two pool Pods must not run at once (they share /workspace/vllm-cache and would bill twice). For
+# that check it takes the same lock as start-any.sh/create-pod.sh (skipped if a caller already
+# holds it, POOL_LOCK_HELD=1), so a standalone run cannot race a pool run started elsewhere on this
+# machine. --force skips both the check and the lock.
+# Exit codes: 0 = started or already running, 1 = failure (auth, or the connection broke so the
+# outcome is UNKNOWN), 2 = bad arguments, 4 = another start/create is in progress on this machine
+# (nothing sent), 5 = the GPU on the Pod's machine is occupied (nothing started, nothing billed;
+# safe to retry, see scripts/start-when-free.sh), 6 = the Pod or the pool could not be read
+# (timeout, 5xx, 429...): nothing was sent, safe to retry, 8 = the request was definitively
+# rejected (unknown Pod, wrong status, or a 4xx other than "occupied"): nothing was sent or
+# changed, safe to try a different Pod, 9 = refused: another pool Pod is active (nothing sent).
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 : "${RUNPOD_POD_ID:?Set RUNPOD_POD_ID}"
+case "$RUNPOD_POD_ID" in *[!a-z0-9]*) echo "Invalid Pod ID '$RUNPOD_POD_ID' (expected lower-case letters and digits)" >&2; exit 2 ;; esac
 # shellcheck source=scripts/_api.sh
 source "$(dirname "$0")/_api.sh"
 # shellcheck source=scripts/_pool.sh
@@ -34,7 +39,7 @@ if [ "$rc" -ne 0 ]; then
   case "$(printf '%s' "$info" | head -n1)" in
     "HTTP 404"*)
       echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID (a redeploy changes the Pod ID; list the Pods with scripts/v2-smoke.sh)." >&2
-      exit 1
+      exit 8
       ;;
     *)
       echo "Could not read Pod $RUNPOD_POD_ID (possibly a temporary problem); nothing was started." >&2
@@ -59,6 +64,12 @@ esac
 case "$name" in
   "$POOL_PREFIX"*)
     if [ "$FORCE" != 1 ]; then
+      # Same lock as start-any.sh/create-pod.sh, so this check-then-act cannot race one of them
+      # starting or creating a Pod elsewhere on this machine. Skipped if a caller already holds it.
+      if [ "${POOL_LOCK_HELD:-0}" != 1 ]; then
+        pool_lock_acquire || { echo "Another start-any.sh / create-pod.sh is in progress on this machine (PID ${POOL_LOCK_HOLDER:-?}, lock $POOL_LOCKFILE). Nothing was started." >&2; exit 4; }
+        trap 'pool_lock_release' EXIT
+      fi
       n=0
       until pool_refresh; do
         n=$((n + 1))
@@ -73,7 +84,7 @@ case "$name" in
         IFS=$'\t' read -r o_id o_name o_status <<<"$other"
         echo "Refusing to start: the pool Pod '$o_name' ($o_id) is already $o_status. Two pool Pods must not run at once." >&2
         echo "Stop it first (scripts/stop-any.sh), or use --force if you really want both." >&2
-        exit 3
+        exit 9
       fi
     fi
     ;;
@@ -95,7 +106,7 @@ if [ "$rc" -ne 0 ]; then
   echo >&2
   api_auth_hint "$out" && exit 1
   first="$(printf '%s' "$out" | head -n1)"
-  occupied=0
+  occupied=0; rejected=0
   case "$first" in
     "HTTP 400"*)
       if printf '%s' "$out" | grep -q "not enough free GPUs"; then
@@ -109,14 +120,16 @@ A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
 HINT
       else
         echo "The API rejected the request (see the message above); nothing was started." >&2
+        rejected=1
       fi
       ;;
-    "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID." >&2 ;;
-    "HTTP 409"*) echo "The Pod's current status ($status) does not allow 'start' (it may already be running)." >&2 ;;
+    "HTTP 404"*) echo "Pod $RUNPOD_POD_ID does not exist. Check RUNPOD_POD_ID." >&2; rejected=1 ;;
+    "HTTP 409"*) echo "The Pod's current status ($status) does not allow 'start' (it may already be running)." >&2; rejected=1 ;;
     "HTTP "*) echo "pod start failed for Pod $RUNPOD_POD_ID (see the message above)." >&2 ;;
     *) echo "The connection failed while the start request may already have been sent: the outcome is UNKNOWN and the Pod may be starting (and billing). Check before retrying: scripts/v2-smoke.sh" >&2 ;;
   esac
   [ "$occupied" -eq 0 ] || exit 5
+  [ "$rejected" -eq 0 ] || exit 8
   exit 1
 fi
 

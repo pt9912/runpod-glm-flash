@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Polls GPU stock (read-only) until the GPU is available, then reports and exits 0.
 # It NEVER starts or creates anything: starting bills the GPU, that stays your call.
-# Stock is an ordering hint, not a reservation; act quickly and expect a start/apply
+# Stock is an ordering hint, not a reservation; act quickly and expect a start
 # can still fail.
 #
 # Usage: wait-for-gpu.sh [GPU_MATCH] [DATACENTER_ID] [INTERVAL_SECONDS] [TIMEOUT_SECONDS]

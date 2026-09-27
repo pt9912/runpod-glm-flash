@@ -34,7 +34,7 @@ for p in pods:
         members.append((clean(p.get("startedAt")), clean(p.get("id")), name, status))
 for started, pid, name, status in sorted(members, key=lambda m: m[0], reverse=True):
     print("M\t%s\t%s\t%s" % (pid, name, status))
-')" || { POOL_ERR="unexpected response from GET /pods"; return 1; }
+' 8>&- 9>&-)" || { POOL_ERR="unexpected response from GET /pods"; return 1; }
   POOL_MEMBERS=""; POOL_ALL_NAMES=""
   while IFS=$'\t' read -r kind id name status; do
     case "$kind" in

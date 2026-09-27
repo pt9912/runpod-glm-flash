@@ -2,6 +2,7 @@
 set -euo pipefail
 : "${RUNPOD_API_KEY:?Set RUNPOD_API_KEY}"
 : "${RUNPOD_POD_ID:?Set RUNPOD_POD_ID}"
+case "$RUNPOD_POD_ID" in *[!a-z0-9]*) echo "Invalid Pod ID '$RUNPOD_POD_ID' (expected lower-case letters and digits)" >&2; exit 2 ;; esac
 # shellcheck source=scripts/_api.sh
 source "$(dirname "$0")/_api.sh"
 
