@@ -6,7 +6,8 @@ Vollständige Dokumentation zu diesem Repo (Bash-Werkzeuge für das validierte
 GLM-5.3-Flash-Deployment
 auf einer NVIDIA B300 in RunPod Secure Cloud). Das README deckt nur den Schnellstart ab; alles
 Weitere — alle `make`-Targets, Exit-Codes, Docker/Make-Interna, Scheduling, der Pool, MCP-Server,
-Claude Code, vLLM-Hinweise und gemessene Startzeiten — steht hier.
+Claude Code und vLLM-Hinweise — steht hier. Gemessene Startzeiten stehen in einer eigenen Datei:
+[docs/startup-times.de.md](startup-times.de.md).
 
 Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofern ein Block nichts
 anderes sagt.

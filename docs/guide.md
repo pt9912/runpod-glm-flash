@@ -5,7 +5,8 @@
 Full documentation for this repo (bash tooling to run the validated GLM-5.3-Flash deployment on
 an NVIDIA B300 in RunPod Secure Cloud). The README covers only the quickstart; everything else —
 all `make` targets, exit codes, Docker/Make internals, scheduling, the pool, MCP servers, Claude
-Code, vLLM tuning notes and measured startup times — is here.
+Code and vLLM tuning notes — is here. Measured startup times are in a separate file:
+[docs/startup-times.md](startup-times.md).
 
 All commands below are run from the repository root unless a block says otherwise.
 
@@ -503,10 +504,10 @@ Exit codes of `start-any.sh`:
 
 ## Optional: Runpod MCP servers
 
-This repo does not need MCP. Runpod offers two [MCP
-servers](https://docs.runpod.io/get-started/mcp-servers) that let an AI coding agent such as Claude
-Code work with Runpod directly. The commands below are taken from Runpod's documentation and were
-not tested with this repo; the scripts here work without them.
+This repo does not need MCP. Runpod offers two
+[MCP servers](https://docs.runpod.io/get-started/mcp-servers) that let an AI coding agent such as
+Claude Code work with Runpod directly. The commands below are taken from Runpod's documentation
+and were not tested with this repo; the scripts here work without them.
 
 **Docs server** (read-only documentation search, no login):
 
