@@ -96,9 +96,26 @@ Prüft, ob `curl` und `python3` installiert sind, ob `RUNPOD_API_KEY` exportiert
 
 ### Werkzeuge
 
-Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager.
+Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager, oder nutze stattdessen Docker/Make (unten), dann brauchst du das nicht.
 
 `runpodctl` wird von diesem Repo **nicht** gebraucht. Installiere es nur, wenn du es für andere Dinge willst, nach der Anleitung unter <https://docs.runpod.io/runpodctl/overview>. Ein sinnvoller Fall ist das Hinterlegen deines SSH-Public-Keys, den du für einen mit `--ssh` angelegten Pod brauchst (`ssh-keygen -t ed25519`, dann entweder `~/.ssh/id_ed25519.pub` in das Feld SSH Public Keys deiner RunPod-Kontoeinstellungen einfügen oder `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` ausführen).
+
+### Docker / Make (optional)
+
+Wer `curl`/`python3` nicht lokal installieren will: `make <target>` führt dasselbe Skript in einem Container aus dem `Dockerfile` aus (nur `bash`+`curl`+`python3`; kein Modell, kein Build-Artefakt, vLLM/GLM läuft nie in diesem Image):
+
+```bash
+make smoke              # scripts/v2-smoke.sh
+make start               # scripts/start-any.sh  (ARGS='...' für zusätzliche Argumente, z.B. --dry-run)
+make gpu ARGS='B300 EU-NL-1'
+make stop
+```
+
+Die `.env` wird read-only in den Container gemountet (`docker-entrypoint.sh` liest sie dort ein, genau wie lokal `set -a; source .env; set +a`); sie landet nie im Image. Jedes Target baut das Image zuerst neu (mit Cache günstig) und braucht im Normalfall kein Argument; die vollständige Liste der Targets steht im `Makefile`.
+
+`create`, `start`, `pod-start` und `start-when-free` können einen Pod starten oder anlegen (GPU-Abrechnung). Die eigene Pool-Sperre eines Containers (`_pool.sh`) kann zwei solche Läufe nicht verhindern, weil jeder `docker run` mit einem frischen, leeren Dateisystem beginnt – die Sperre würde einen zweiten Lauf nie sehen. Das Makefile serialisiert diese vier Targets deshalb selbst mit einer Sperre **auf dem Host** (`flock`, außerhalb des Containers), bevor überhaupt einer startet; ein zweiter gibt eine Meldung aus und bricht ab, statt zu laufen.
+
+`scripts/claude-glm.sh` ist bewusst **kein** solches Target: Es ersetzt sich durch die `claude`-CLI, die auf deinem Rechner laufen muss, nicht in einem minimalen Container, der sie gar nicht hat.
 
 ## 1. Schreibgeschützter REST-v2-Check
 

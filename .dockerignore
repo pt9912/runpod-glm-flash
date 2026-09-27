@@ -1,0 +1,8 @@
+# Defense in depth: the Dockerfile only COPYs scripts/, so none of this ever reaches the image,
+# but a secret must never even enter the build context.
+.git
+.env
+.env.*
+!.env.example
+*.log
+.startup-times.log

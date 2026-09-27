@@ -96,9 +96,26 @@ Checks that `curl` and `python3` are installed, that `RUNPOD_API_KEY` is exporte
 
 ### Tools
 
-Required: `curl` and `python3`. Install them with your package manager.
+Required: `curl` and `python3`. Install them with your package manager, or use Docker/Make instead (below) so you do not have to.
 
 `runpodctl` is **not** needed by this repo. Install it only if you want it for other things, following <https://docs.runpod.io/runpodctl/overview>. One useful case is registering your SSH public key, which you need for a Pod created with `--ssh` (`ssh-keygen -t ed25519`, then either paste `~/.ssh/id_ed25519.pub` into the SSH Public Keys field of your RunPod account settings, or run `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub`).
+
+### Docker / Make (optional)
+
+If you would rather not install `curl`/`python3` locally, `make <target>` runs the same script in a container built from the `Dockerfile` (`bash`+`curl`+`python3` only; no model, no compiled artifact, vLLM/GLM never run in this image):
+
+```bash
+make smoke              # scripts/v2-smoke.sh
+make start               # scripts/start-any.sh  (ARGS='...' for extra arguments, e.g. --dry-run)
+make gpu ARGS='B300 EU-NL-1'
+make stop
+```
+
+`.env` is bind-mounted read-only into the container (`docker-entrypoint.sh` sources it there, the same as `set -a; source .env; set +a` locally); it is never baked into the image. Each target rebuilds the image first (cheap once cached) and needs no argument for the common case; see the `Makefile` for the full target list.
+
+`create`, `start`, `pod-start` and `start-when-free` can start or create a Pod (GPU billing). A container's own pool lock (`_pool.sh`) cannot protect against two such runs, because each `docker run` starts with a fresh, empty filesystem — the lock would never actually see a second one. The Makefile therefore serializes these four targets itself with a lock **on the host** (`flock`, outside the container) before it ever starts one; a second one prints a message and exits instead of running.
+
+`scripts/claude-glm.sh` is deliberately **not** one of these targets: it execs the `claude` CLI, which needs to run on your machine, not in a minimal container that does not have it.
 
 ## 1. Read-only REST v2 check
 
