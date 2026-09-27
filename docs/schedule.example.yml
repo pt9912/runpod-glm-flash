@@ -8,7 +8,9 @@
 # The start job runs `make start` (start-any.sh through the Docker image, see the Makefile/README):
 # it restarts the pool Pods one after the other and creates a new one if none can start (up to
 # MAX_WAIT_SECONDS); a failed attempt costs nothing. The stop job runs `make stop`. `make` builds
-# the image first (cached after the first run). The pool is every Pod whose name starts with
+# the image first; a GitHub-hosted runner is a fresh VM each time, so it rebuilds from scratch on
+# every single scheduled run (seconds, for this tiny image) rather than reusing a previous run's
+# cache. The pool is every Pod whose name starts with
 # glm-5.3-flash-b300, read live. Every successful start bills the
 # GPU (B300: about $7.89/h), so review this file carefully before enabling it. If the GPU stays
 # occupied, the job fails and the Pod stays stopped for that day. No start attempt begins after
