@@ -16,9 +16,9 @@ secrets.yml
 # Local measurement log (see the README "Startup times")
 .startup-times.log
 
-# Local make exit-code file (see the Makefile: make's own exit code does not preserve a
-# script's real one; this holds the real one for whatever last ran)
-.make-exit-code
+# Local make exit-code files, one per target (see the Makefile: make's own exit code does not
+# preserve a script's real one; these hold the real one for whatever last ran)
+.make-exit-code.*
 
 # Secrets / environment
 .env
