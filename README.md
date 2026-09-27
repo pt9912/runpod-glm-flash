@@ -37,6 +37,7 @@ All commands below are run from the repository root unless a block says otherwis
 | `pod-stop.sh` | Stops one Pod | yes | ends |
 | `stop-any.sh` | Stops every active Pod of the pool | yes | ends |
 | `pod-terminate.sh` | Deletes a Pod permanently (needs `--yes`; the volume stays) | yes | ends |
+| `claude-glm.sh` | Resolves the running Pod, waits until it answers, execs `claude --model glm-5.3-flash` | no | no |
 
 `_api.sh` and `_pool.sh` are helpers that the other scripts source; you do not run them. `docs/schedule.example.yml` is a disabled example workflow. `pod-start.sh`, `pod-stop.sh` and `pod-terminate.sh` print the target (name, status, hourly cost) before they act, `create-pod.sh` prints the request, and `start-any.sh --dry-run` shows the pool and the order without sending anything. The scripts marked "starts" begin the GPU billing.
 
@@ -255,6 +256,14 @@ Rules of thumb:
 - Starting or creating Pods through an agent bills the GPU exactly like the scripts do. Keep reviewing what the agent is about to do.
 
 ## Claude Code
+
+```bash
+./scripts/claude-glm.sh
+```
+
+It resolves the Pod (the single active pool Pod, else `RUNPOD_POD_ID`, else `GLM_URL`; the choice and why are printed), waits until `/v1/models` actually answers `200` with your key (`READY_RETRIES` / `READY_DELAY`, default 5 / 5 s, so a RunPod proxy still warming up after a start does not fail the session outright), then sets the environment below and execs `claude --model glm-5.3-flash`, passing through any arguments. It never starts or creates a Pod; if none is running it says so and points at `scripts/start-any.sh`. Exit codes: 1 no pool Pod running (or the endpoint never became ready, or several pool Pods are active), 2 `VLLM_API_KEY` not set, 127 `claude` not found; otherwise it is `claude`'s own exit code.
+
+Equivalent by hand, without the readiness check:
 
 ```bash
 export GLM_URL='https://POD_ID-8000.proxy.runpod.net'

@@ -37,6 +37,7 @@ Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofe
 | `pod-stop.sh` | Stoppt einen Pod | ja | beendet |
 | `stop-any.sh` | Stoppt jeden aktiven Pod des Pools | ja | beendet |
 | `pod-terminate.sh` | Löscht einen Pod dauerhaft (braucht `--yes`; das Volume bleibt) | ja | beendet |
+| `claude-glm.sh` | Löst den laufenden Pod auf, wartet bis er antwortet, ersetzt sich durch `claude --model glm-5.3-flash` | nein | nein |
 
 `_api.sh` und `_pool.sh` sind Hilfsdateien, die die anderen Skripte einbinden; du führst sie nicht aus. `docs/schedule.example.yml` ist ein deaktivierter Beispiel-Workflow. `pod-start.sh`, `pod-stop.sh` und `pod-terminate.sh` zeigen das Ziel (Name, Status, Stundenkosten) vor der Aktion, `create-pod.sh` zeigt die Anfrage, und `start-any.sh --dry-run` zeigt den Pool und die Reihenfolge, ohne etwas zu senden. Die mit "startet" markierten Skripte beginnen die GPU-Abrechnung.
 
@@ -255,6 +256,14 @@ Faustregeln:
 - Pods über einen Agenten zu starten oder anzulegen rechnet die GPU genauso ab wie die Skripte. Prüfe weiter, was der Agent gleich tun will.
 
 ## Claude Code
+
+```bash
+./scripts/claude-glm.sh
+```
+
+Es löst den Pod auf (der einzige aktive Pool-Pod, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; die Wahl und der Grund werden ausgegeben), wartet, bis `/v1/models` mit deinem Key tatsächlich `200` antwortet (`READY_RETRIES` / `READY_DELAY`, Standard 5 / 5 s, damit ein nach einem Start noch warmlaufender RunPod-Proxy die Sitzung nicht gleich scheitern lässt), setzt dann die Umgebung unten und ersetzt sich durch `claude --model glm-5.3-flash`, alle Argumente werden durchgereicht. Es startet oder legt nie einen Pod an; läuft keiner, sagt es das und verweist auf `scripts/start-any.sh`. Exit-Codes: 1 kein Pool-Pod läuft (oder der Endpunkt wurde nie bereit, oder mehrere Pool-Pods sind aktiv), 2 `VLLM_API_KEY` nicht gesetzt, 127 `claude` nicht gefunden; sonst ist es der Exit-Code von `claude` selbst.
+
+Von Hand gleichwertig, ohne die Bereitschaftsprüfung:
 
 ```bash
 export GLM_URL='https://POD_ID-8000.proxy.runpod.net'
