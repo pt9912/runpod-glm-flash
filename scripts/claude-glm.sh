@@ -2,7 +2,7 @@
 # Wrapper for Claude Code against the pool's running Pod: resolves the current Pod, waits until
 # it actually answers, then execs `claude`. Replaces hand-editing GLM_URL/POD_ID before every
 # session. It only reads (Pod list, Pod info, one /v1/models probe); it NEVER starts or creates a
-# Pod (that stays scripts/start-any.sh, a deliberate, billed step).
+# Pod (that stays `make start`, a deliberate, billed step).
 #
 # Usage: claude-glm.sh [ARGS FOR CLAUDE...]     (all arguments are passed through to `claude`)
 #   Which Pod: the single ACTIVE pool Pod (needs RUNPOD_API_KEY), else RUNPOD_POD_ID, else GLM_URL;
@@ -43,7 +43,7 @@ case "$resolve_rc" in
       URL="${GLM_URL%/}"; URL="${URL%/v1}"
       echo "Pod: from GLM_URL ($URL)" >&2
     else
-      echo "No pool Pod is running and neither RUNPOD_POD_ID nor GLM_URL is set. Start one first: scripts/start-any.sh (bills the GPU)." >&2
+      echo "No pool Pod is running and neither RUNPOD_POD_ID nor GLM_URL is set. Start one first: make start (bills the GPU)." >&2
       exit 1
     fi
     ;;
@@ -61,7 +61,7 @@ EOT
   [ "$code" = 200 ] && break
   n=$((n + 1))
   if [ "$n" -ge "$tries" ]; then
-    echo "Endpoint not ready after $tries tries (last HTTP $code). Still booting? Try scripts/wait-for-ready.sh." >&2
+    echo "Endpoint not ready after $tries tries (last HTTP $code). Still booting? Try make wait-ready." >&2
     exit 1
   fi
   echo "Not ready yet (HTTP $code), retrying in ${delay}s ..." >&2

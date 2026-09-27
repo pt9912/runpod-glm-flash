@@ -1,9 +1,15 @@
-# Convenience wrapper around scripts/*.sh through the Docker image (Dockerfile): only bash,
-# curl and python3 need to be installed, Docker replaces them. It does NOT cover
-# scripts/claude-glm.sh: that execs the `claude` CLI on your machine and is meant to run there
-# directly (./scripts/claude-glm.sh), not containerized (see the README).
+# THE documented way to run this repo's scripts: `make <target>`, through the Docker image
+# (Dockerfile). Do not call scripts/*.sh directly (except scripts/claude-glm.sh, see below);
+# only bash, curl and python3 go into the image, not onto your machine.
 #
-# .env is bind-mounted read-only into the container (never baked into the image, never printed).
+# .env, if present, is bind-mounted read-only into the container (never baked into the image,
+# never printed) and sourced there. Without an .env file (for example in CI), the variables
+# below are instead forwarded from whatever already exported them into this `make` invocation's
+# environment (a GitHub Actions `env:` block, or `export RUNPOD_API_KEY=...` in your shell).
+#
+# wait-ready additionally bind-mounts .startup-times.log read-write: wait-for-ready.sh appends to
+# it, and a `docker run --rm` container's own filesystem (and anything written to it) is discarded
+# on exit, so without this mount the log would never survive past a single run.
 #
 # A container's own pool lock (_pool.sh) never spans two `docker run` invocations: each gets a
 # fresh filesystem, so the lock file starts empty every time and would never actually block a
@@ -14,8 +20,13 @@
 # Extra arguments: ARGS='...', e.g. `make gpu ARGS='B300 EU-NL-1'`.
 IMAGE      := runpod-glm-tools
 ENV_FILE   := $(CURDIR)/.env
+ENV_MOUNT  := $(if $(wildcard $(ENV_FILE)),-v "$(ENV_FILE):/app/.env:ro",)
+PASSTHROUGH := -e RUNPOD_API_KEY -e RUNPOD_BASE_URL -e RUNPOD_POD_ID -e NETWORK_VOLUME_ID \
+               -e VLLM_API_KEY -e GLM_URL -e POOL_PREFIX -e POOL_MAX
 LOCK_FILE  := $(or $(TMPDIR),/tmp)/runpod-glm-make-$(shell id -u).lock
-DOCKER_RUN := docker run --rm -i -v "$(ENV_FILE):/app/.env:ro" $(IMAGE)
+LOG_FILE   := $(CURDIR)/.startup-times.log
+DOCKER_RUN_BASE := docker run --rm -i $(ENV_MOUNT) $(PASSTHROUGH)
+DOCKER_RUN := $(DOCKER_RUN_BASE) $(IMAGE)
 LOCKED     := flock -n -E 99 "$(LOCK_FILE)"
 
 .PHONY: build precheck smoke gpu wait-gpu verify check wait-ready stop pod-stop pod-terminate \
@@ -38,7 +49,8 @@ verify: build
 check: build
 	$(DOCKER_RUN) bash scripts/check-endpoint.sh $(ARGS)
 wait-ready: build
-	$(DOCKER_RUN) bash scripts/wait-for-ready.sh $(ARGS)
+	@touch "$(LOG_FILE)"
+	$(DOCKER_RUN_BASE) -v "$(LOG_FILE):/app/.startup-times.log" $(IMAGE) bash scripts/wait-for-ready.sh $(ARGS)
 stop: build
 	$(DOCKER_RUN) bash scripts/stop-any.sh
 pod-stop: build

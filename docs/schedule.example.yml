@@ -5,9 +5,11 @@
 #   summer (CEST, UTC+2): start 03:00 UTC, stop 17:00 UTC
 #   winter (CET,  UTC+1): start 04:00 UTC, stop 18:00 UTC
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
-# The start job runs scripts/start-any.sh: it restarts the pool Pods one after the other and creates a new
-# one if none can start (up to MAX_WAIT_SECONDS); a failed attempt costs nothing. The stop job runs
-# scripts/stop-any.sh. The pool is every Pod whose name starts with glm-5.3-flash-b300, read live. Every successful start bills the
+# The start job runs `make start` (start-any.sh through the Docker image, see the Makefile/README):
+# it restarts the pool Pods one after the other and creates a new one if none can start (up to
+# MAX_WAIT_SECONDS); a failed attempt costs nothing. The stop job runs `make stop`. `make` builds
+# the image first (cached after the first run). The pool is every Pod whose name starts with
+# glm-5.3-flash-b300, read live. Every successful start bills the
 # GPU (B300: about $7.89/h), so review this file carefully before enabling it. If the GPU stays
 # occupied, the job fails and the Pod stays stopped for that day. No start attempt begins after
 # MAX_WAIT_SECONDS (an attempt already running can finish about 2 minutes later).
@@ -86,9 +88,11 @@ jobs:
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
           NETWORK_VOLUME_ID: ${{ secrets.NETWORK_VOLUME_ID }}
-        run: scripts/start-any.sh "$MAX_WAIT_SECONDS" 60
+        # No .env file on the runner: make forwards these already-exported secrets into the
+        # container instead (see the Makefile).
+        run: make start ARGS="$MAX_WAIT_SECONDS 60"
       - name: Stop
         if: steps.act.outputs.action == 'stop'
         env:
           RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
-        run: scripts/stop-any.sh
+        run: make stop

@@ -8,7 +8,7 @@ Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofe
 
 ## Aktuelle Architektur
 
-- **Pod-Anlage:** `scripts/create-pod.sh` (REST v2, direkt nach dem Anlegen geprüft). Der Pool der Pods wird mit `start-any.sh` / `stop-any.sh` verwaltet.
+- **Pod-Anlage:** `make create` (REST v2, direkt nach dem Anlegen geprüft). Der Pool der Pods wird mit `make start` / `make stop` verwaltet.
 - **API-Basis:** `https://api.runpod.io/v2` (von allen Skripten verwendet)
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
 - **Image:** `vllm/vllm-openai:glm53-flash`
@@ -21,39 +21,40 @@ Alle Befehle unten werden aus dem Repository-Wurzelverzeichnis ausgeführt, sofe
 
 ## Die Skripte im Überblick
 
-| Skript | Was es tut | Ändert Zustand | GPU-Abrechnung |
+| Make-Target | Was es tut | Ändert Zustand | GPU-Abrechnung |
 |---|---|---|---|
-| `pre-check.sh` | Prüft Werkzeuge, Umgebung und `NETWORK_VOLUME_ID` (`--online`: zusätzlich ein lesender API-Aufruf) | nein | nein |
-| `v2-smoke.sh` | Listet deine Pods (ID, Name, Status) | nein | nein |
-| `gpu-availability.sh` | Zeigt den Bestand eines GPU-Typs, insgesamt oder pro Datacenter | nein | nein |
-| `wait-for-gpu.sh` | Fragt den Bestand ab, bis die GPU verfügbar ist; startet nie etwas | nein | nein |
-| `create-pod.sh` | Legt den Pod an (standardmäßig Trockenlauf, `--yes` zum Anlegen) und prüft ihn | legt einen Pod an | startet |
-| `verify-pod.sh` | Prüft, ob ein Pod der vorgesehenen Konfiguration entspricht | nein | nein |
-| `check-endpoint.sh` | Prüft die API über den Proxy: 401 ohne Key, 200 mit Key, Modell und Kontext | nein | nein |
-| `wait-for-ready.sh` | Fragt ab, bis vLLM antwortet, und misst die Startzeit (schreibt ein lokales Log) | nein | nein |
-| `pod-start.sh` | Startet einen gestoppten Pod | ja | startet |
-| `start-when-free.sh` | Wiederholt `pod-start.sh` für einen Pod, solange seine GPU belegt ist | ja | startet |
-| `start-any.sh` | Pool: bringt einen Pod zum Laufen, startet zuerst gestoppte neu und legt einen neuen an, wenn keiner startet | ja | startet |
-| `pod-stop.sh` | Stoppt einen Pod | ja | beendet |
-| `stop-any.sh` | Stoppt jeden aktiven Pod des Pools | ja | beendet |
-| `pod-terminate.sh` | Löscht einen Pod dauerhaft (braucht `--yes`; das Volume bleibt) | ja | beendet |
-| `claude-glm.sh` | Löst den laufenden Pod auf, wartet bis er antwortet, ersetzt sich durch `claude --model glm-5.3-flash` | nein | nein |
+| `precheck` (`pre-check.sh`) | Prüft Werkzeuge, Umgebung und `NETWORK_VOLUME_ID` (`ARGS=--online`: zusätzlich ein lesender API-Aufruf) | nein | nein |
+| `smoke` (`v2-smoke.sh`) | Listet deine Pods (ID, Name, Status) | nein | nein |
+| `gpu` (`gpu-availability.sh`) | Zeigt den Bestand eines GPU-Typs, insgesamt oder pro Datacenter | nein | nein |
+| `wait-gpu` (`wait-for-gpu.sh`) | Fragt den Bestand ab, bis die GPU verfügbar ist; startet nie etwas | nein | nein |
+| `create` (`create-pod.sh`) | Legt den Pod an (standardmäßig Trockenlauf, `ARGS=--yes` zum Anlegen) und prüft ihn | legt einen Pod an | startet |
+| `verify` (`verify-pod.sh`) | Prüft, ob ein Pod der vorgesehenen Konfiguration entspricht | nein | nein |
+| `check` (`check-endpoint.sh`) | Prüft die API über den Proxy: 401 ohne Key, 200 mit Key, Modell und Kontext | nein | nein |
+| `wait-ready` (`wait-for-ready.sh`) | Fragt ab, bis vLLM antwortet, und misst die Startzeit (schreibt ein lokales Log) | nein | nein |
+| `pod-start` (`pod-start.sh`) | Startet einen gestoppten Pod | ja | startet |
+| `start-when-free` (`start-when-free.sh`) | Wiederholt `pod-start` für einen Pod, solange seine GPU belegt ist | ja | startet |
+| `start` (`start-any.sh`) | Pool: bringt einen Pod zum Laufen, startet zuerst gestoppte neu und legt einen neuen an, wenn keiner startet | ja | startet |
+| `pod-stop` (`pod-stop.sh`) | Stoppt einen Pod | ja | beendet |
+| `stop` (`stop-any.sh`) | Stoppt jeden aktiven Pod des Pools | ja | beendet |
+| `pod-terminate` (`pod-terminate.sh`) | Löscht einen Pod dauerhaft (braucht `ARGS=--yes`; das Volume bleibt) | ja | beendet |
 
-`_api.sh` und `_pool.sh` sind Hilfsdateien, die die anderen Skripte einbinden; du führst sie nicht aus. `docs/schedule.example.yml` ist ein deaktivierter Beispiel-Workflow. `pod-start.sh`, `pod-stop.sh` und `pod-terminate.sh` zeigen das Ziel (Name, Status, Stundenkosten) vor der Aktion, `create-pod.sh` zeigt die Anfrage, und `start-any.sh --dry-run` zeigt den Pool und die Reihenfolge, ohne etwas zu senden. Die mit "startet" markierten Skripte beginnen die GPU-Abrechnung.
+`_api.sh` und `_pool.sh` sind Hilfsdateien, die die anderen Skripte einbinden; du führst sie nicht aus, weder über `make` noch sonst. `docs/schedule.example.yml` ist ein deaktivierter Beispiel-Workflow. `pod-start`, `pod-stop` und `pod-terminate` zeigen das Ziel (Name, Status, Stundenkosten) vor der Aktion, `create` zeigt die Anfrage, und `make start ARGS=--dry-run` zeigt den Pool und die Reihenfolge, ohne etwas zu senden. Die mit "startet" markierten Targets beginnen die GPU-Abrechnung.
+
+`scripts/claude-glm.sh` ist das eine Skript, das du direkt aufrufst, nie über `make` (siehe „Claude Code“ unten): Es ersetzt sich durch die `claude`-CLI, die auf deinem Rechner laufen muss, nicht im minimalen Container, den `make` für alles andere verwendet.
 
 Typische Abläufe:
 
 ```bash
-# first time
-./scripts/pre-check.sh --online
-./scripts/create-pod.sh              # dry run: shows the request and the stock
-./scripts/create-pod.sh --yes        # creates the Pod and verifies it (bills the GPU)
-./scripts/wait-for-ready.sh && ./scripts/check-endpoint.sh
+# beim ersten Mal
+make precheck ARGS=--online
+make create                    # Trockenlauf: zeigt Anfrage und Bestand
+make create ARGS=--yes         # legt den Pod an und prüft ihn (rechnet die GPU ab)
+make wait-ready && make check
 
-# every day
-./scripts/start-any.sh --wait        # gets one pool Pod running and waits until vLLM answers
-./scripts/check-endpoint.sh
-./scripts/stop-any.sh                # when you are done (ends the GPU billing)
+# jeden Tag
+make start ARGS=--wait         # bringt einen Pool-Pod zum Laufen und wartet, bis vLLM antwortet
+make check
+make stop                      # wenn fertig (beendet die GPU-Abrechnung)
 ```
 
 ## Secrets
@@ -88,21 +89,21 @@ Die Pod-Definition enthält nur RunPod-Secret-Referenzen (`{{ RUNPOD_SECRET_<nam
 ## 0. Vorab-Check
 
 ```bash
-./scripts/pre-check.sh            # Werkzeuge, Umgebung, lokale Dateien
-./scripts/pre-check.sh --online   # zusätzlich ein lesender API-Aufruf, um den Key zu prüfen
+make precheck                    # Werkzeuge, Umgebung, lokale Dateien
+make precheck ARGS=--online      # zusätzlich ein lesender API-Aufruf, um den Key zu prüfen
 ```
 
-Prüft, ob `curl` und `python3` installiert sind, ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a`) und ob `NETWORK_VOLUME_ID` gesetzt ist. `RUNPOD_POD_ID` und `VLLM_API_KEY` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
+Prüft, ob `RUNPOD_API_KEY` exportiert ist (ein einfaches `. .env` exportiert nicht; nimm `set -a; source .env; set +a` – oder, über `make`, reicht eine vorhandene `.env`-Datei, sie wird automatisch gemountet und eingelesen) und ob `NETWORK_VOLUME_ID` gesetzt ist. `RUNPOD_POD_ID` und `VLLM_API_KEY` erzeugen nur Warnungen, weil sie erst später gebraucht werden. Secret-Werte werden nie ausgegeben. Exit-Code 1 bedeutet ein blockierendes Problem.
 
 ### Werkzeuge
 
-Erforderlich: `curl` und `python3`. Installiere sie mit deinem Paketmanager, oder nutze stattdessen Docker/Make (unten), dann brauchst du das nicht.
+Erforderlich: `docker` und `make`. `make <target>` ist die Art, wie jedes Skript in diesem Repo ausgeführt wird (siehe „Docker / Make“ unten); `curl`/`python3` musst du dafür nicht lokal installieren, und `scripts/*.sh` rufst du nicht direkt auf (Ausnahme: `scripts/claude-glm.sh`, siehe „Claude Code“).
 
 `runpodctl` wird von diesem Repo **nicht** gebraucht. Installiere es nur, wenn du es für andere Dinge willst, nach der Anleitung unter <https://docs.runpod.io/runpodctl/overview>. Ein sinnvoller Fall ist das Hinterlegen deines SSH-Public-Keys, den du für einen mit `--ssh` angelegten Pod brauchst (`ssh-keygen -t ed25519`, dann entweder `~/.ssh/id_ed25519.pub` in das Feld SSH Public Keys deiner RunPod-Kontoeinstellungen einfügen oder `runpodctl ssh add-key --key-file ~/.ssh/id_ed25519.pub` ausführen).
 
-### Docker / Make (optional)
+### Docker / Make
 
-Wer `curl`/`python3` nicht lokal installieren will: `make <target>` führt dasselbe Skript in einem Container aus dem `Dockerfile` aus (nur `bash`+`curl`+`python3`; kein Modell, kein Build-Artefakt, vLLM/GLM läuft nie in diesem Image):
+`make <target>` führt das jeweilige Skript in einem Container aus dem `Dockerfile` aus (nur `bash`+`curl`+`python3`; kein Modell, kein Build-Artefakt, vLLM/GLM läuft nie in diesem Image). Das ist **die** dokumentierte Art, dieses Repo zu benutzen, keine Abkürzung neben dem direkten Aufruf von `scripts/*.sh`:
 
 ```bash
 make smoke              # scripts/v2-smoke.sh
@@ -111,7 +112,7 @@ make gpu ARGS='B300 EU-NL-1'
 make stop
 ```
 
-Die `.env` wird read-only in den Container gemountet (`docker-entrypoint.sh` liest sie dort ein, genau wie lokal `set -a; source .env; set +a`); sie landet nie im Image. Jedes Target baut das Image zuerst neu (mit Cache günstig) und braucht im Normalfall kein Argument; die vollständige Liste der Targets steht im `Makefile`.
+Ist eine `.env` vorhanden, wird sie read-only in den Container gemountet (`docker-entrypoint.sh` liest sie dort ein, genau wie lokal `set -a; source .env; set +a`); sie landet nie im Image. Ohne `.env`-Datei (etwa in CI) werden stattdessen bereits exportierte Variablen (`RUNPOD_API_KEY`, `NETWORK_VOLUME_ID`, …) in den Container durchgereicht. Jedes Target baut das Image zuerst neu (mit Cache günstig) und braucht im Normalfall kein Argument; die vollständige Liste der Targets steht im `Makefile`.
 
 `create`, `start`, `pod-start` und `start-when-free` können einen Pod starten oder anlegen (GPU-Abrechnung). Die eigene Pool-Sperre eines Containers (`_pool.sh`) kann zwei solche Läufe nicht verhindern, weil jeder `docker run` mit einem frischen, leeren Dateisystem beginnt – die Sperre würde einen zweiten Lauf nie sehen. Das Makefile serialisiert diese vier Targets deshalb selbst mit einer Sperre **auf dem Host** (`flock`, außerhalb des Containers), bevor überhaupt einer startet; ein zweiter gibt eine Meldung aus und bricht ab, statt zu laufen.
 
@@ -120,7 +121,7 @@ Die `.env` wird read-only in den Container gemountet (`docker-entrypoint.sh` lie
 ## 1. Schreibgeschützter REST-v2-Check
 
 ```bash
-./scripts/v2-smoke.sh
+make smoke
 ```
 
 Das führt ein GET gegen `/v2/pods` aus und legt keine GPU an. Es gibt pro Pod nur ID, Name und Status aus, weil die Rohantwort die `env` jedes Pods enthält.
@@ -133,40 +134,40 @@ Trage die ID deines bestehenden Network Volumes in die `.env` ein (Vorlage: `.en
 echo 'NETWORK_VOLUME_ID=<your Network Volume ID>' >> .env
 ```
 
-Ein Network Volume ist an ein Datacenter gebunden, deshalb muss eine B300 **in diesem Datacenter** frei sein; eine freie B300 anderswo hilft nicht. `create-pod.sh` legt den Pod automatisch im Datacenter des Volumes an. Prüfe den Bestand vorher mit `./scripts/gpu-availability.sh B300 <DATACENTER>` (ohne Datacenter nimmt es das Datacenter des Pods `RUNPOD_POD_ID`, falls gesetzt, sonst den Gesamtbestand; mit `any` erzwingst du den Gesamtbestand). `B300` trifft den exakten GPU-Namen; die volle GPU-ID lautet `NVIDIA B300 SXM6 AC`, die du ebenfalls übergeben kannst. Trifft keine ID und kein Name exakt, listet das Skript alle GPUs auf, die den Text enthalten, und sagt das. Exit-Codes: 0 Bestand vorhanden, 2 kein Bestand, 4 unbekannter GPU-Typ oder unbekanntes Datacenter (Tippfehler), 1 API-Fehler.
+Ein Network Volume ist an ein Datacenter gebunden, deshalb muss eine B300 **in diesem Datacenter** frei sein; eine freie B300 anderswo hilft nicht. `create-pod.sh` legt den Pod automatisch im Datacenter des Volumes an. Prüfe den Bestand vorher mit `make gpu ARGS='B300 <DATACENTER>'` (ohne Datacenter nimmt es das Datacenter des Pods `RUNPOD_POD_ID`, falls gesetzt, sonst den Gesamtbestand; mit `any` erzwingst du den Gesamtbestand). `B300` trifft den exakten GPU-Namen; die volle GPU-ID lautet `NVIDIA B300 SXM6 AC`, die du ebenfalls übergeben kannst. Trifft keine ID und kein Name exakt, listet es alle GPUs auf, die den Text enthalten, und sagt das. Exit-Codes: 0 Bestand vorhanden, 2 kein Bestand, 4 unbekannter GPU-Typ oder unbekanntes Datacenter (Tippfehler), 1 API-Fehler.
 
-Standardmäßig läuft der Pod im Offline-Modus: Der Checkpoint wird auf dem Volume erwartet, `HF_HUB_OFFLINE=1` wird gesetzt und kein `HF_TOKEN` gesendet. Für ein frisches Setup oder einen erneuten Download `create-pod.sh --online` verwenden; dann sind Downloads erlaubt und das Secret `HF_TOKEN` wird eingespielt.
+Standardmäßig läuft der Pod im Offline-Modus: Der Checkpoint wird auf dem Volume erwartet, `HF_HUB_OFFLINE=1` wird gesetzt und kein `HF_TOKEN` gesendet. Für ein frisches Setup oder einen erneuten Download `make create ARGS=--online` verwenden; dann sind Downloads erlaubt und das Secret `HF_TOKEN` wird eingespielt.
 
 ## 3. Trockenlauf
 
 ```bash
-./scripts/create-pod.sh
+make create
 ```
 
-Der Standard ist ein **Trockenlauf**: Es liest das Datacenter des Volumes, bricht ab, wenn schon ein Pod mit demselben Namen existiert, zeigt die vollständige Anfrage (nur RunPod-Secret-Referenzen, keine geheimen Werte) samt aktuellem Bestand und legt nichts an. Optionen: `--online` (Downloads erlaubt), `--ssh` (zusätzlich `22/tcp` und `startSsh`; standardmäßig aus). Überschreibbar über die Umgebung: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
+Der Standard ist ein **Trockenlauf**: Es liest das Datacenter des Volumes, bricht ab, wenn schon ein Pod mit demselben Namen existiert, zeigt die vollständige Anfrage (nur RunPod-Secret-Referenzen, keine geheimen Werte) samt aktuellem Bestand und legt nichts an. Optionen (`ARGS='...'`): `--online` (Downloads erlaubt), `--ssh` (zusätzlich `22/tcp` und `startSsh`; standardmäßig aus). Überschreibbar über die Umgebung: `POD_NAME`, `GPU_ID`, `DATACENTER`, `CONTAINER_DISK_GB`, `VLLM_SECRET_NAME`, `HF_SECRET_NAME`.
 
 Prüfe die Anfrage: 1× B300, `mounts.network` mit deinem Volume auf `/workspace`, Port 8000, das Image, die vLLM-Argumente (1M-Kontext, MTP, `--max-num-seqs 6`) und dass `VLLM_API_KEY` eine `{{ RUNPOD_SECRET_... }}`-Referenz ist.
 
 ## 4. Den Pod anlegen
 
 ```bash
-./scripts/create-pod.sh --yes
+make create ARGS=--yes
 ```
 
-Das ist der Schritt, der abrechnungspflichtige B300-Rechenzeit startet (etwa 7,89 $/h). Das Skript wiederholt nie eine Anfrage, die womöglich gesendet wurde. Danach führt es `scripts/verify-pod.sh` aus (nur lesend): 1× B300, das Volume auf `/workspace`, Port 8000, `VLLM_API_KEY` als Secret-Referenz (nie leer, nie ein Klartextwert), die Caches auf `/workspace` und die wichtigen vLLM-Argumente; es gibt nur Namen von Env-Variablen aus, nie Werte. Bei Erfolg trägst du die ausgegebene Pod-ID als `RUNPOD_POD_ID` in die `.env` ein. Die Prüfung liest den Pod bis zu dreimal, ein einzelner Netzwerkfehler gilt also nicht als „der Pod ist falsch“. Schlägt die Prüfung **fehl**, ist der Pod falsch und rechnet ab, deshalb räumt `create-pod.sh` auf, jeden Schritt mit Wiederholungen: Es **stoppt** ihn (die Abrechnung endet), **benennt** ihn in `failed-<name>-<id>` um (er verlässt den Pool und wird nie versehentlich neu gestartet, bleibt aber zum Untersuchen erhalten) und **beendet** ihn als Rückfall, wenn Stoppen oder Umbenennen doch nicht geklappt hat. Mit `--terminate-on-fail` wird er sofort gelöscht. Die Abschlussmeldung sagt genau, was geklappt hat und, falls etwas nicht geklappt hat, den Befehl zum Beenden:
+Das ist der Schritt, der abrechnungspflichtige B300-Rechenzeit startet (etwa 7,89 $/h). Das Skript wiederholt nie eine Anfrage, die womöglich gesendet wurde. Danach führt es `verify-pod.sh` aus (nur lesend): 1× B300, das Volume auf `/workspace`, Port 8000, `VLLM_API_KEY` als Secret-Referenz (nie leer, nie ein Klartextwert), die Caches auf `/workspace` und die wichtigen vLLM-Argumente; es gibt nur Namen von Env-Variablen aus, nie Werte. Bei Erfolg trägst du die ausgegebene Pod-ID als `RUNPOD_POD_ID` in die `.env` ein. Die Prüfung liest den Pod bis zu dreimal, ein einzelner Netzwerkfehler gilt also nicht als „der Pod ist falsch“. Schlägt die Prüfung **fehl**, ist der Pod falsch und rechnet ab, deshalb räumt `create-pod.sh` auf, jeden Schritt mit Wiederholungen: Es **stoppt** ihn (die Abrechnung endet), **benennt** ihn in `failed-<name>-<id>` um (er verlässt den Pool und wird nie versehentlich neu gestartet, bleibt aber zum Untersuchen erhalten) und **beendet** ihn als Rückfall, wenn Stoppen oder Umbenennen doch nicht geklappt hat. Mit `ARGS=--terminate-on-fail` wird er sofort gelöscht. Die Abschlussmeldung sagt genau, was geklappt hat und, falls etwas nicht geklappt hat, den Befehl zum Beenden:
 
 ```bash
-RUNPOD_POD_ID=<the new ID> ./scripts/pod-terminate.sh --yes
+RUNPOD_POD_ID=<the new ID> make pod-terminate ARGS=--yes
 ```
 
 Konnte die Prüfung **gar nicht laufen** (der Pod war nicht lesbar, Exit 6), bleibt der Pod unangetastet laufen, und die Meldung sagt, dass du `verify-pod.sh <POD_ID>` ausführen sollst; das ist kein Hinweis darauf, dass er falsch ist.
 
-`pod-terminate.sh` löscht einen Pod dauerhaft (ohne `--yes` zeigt es nur das Ziel); das Network Volume ist eine eigene Ressource und bleibt, Modell und Caches überleben also. `create-pod.sh` legt keinen zweiten Pod an, solange ein anderer Pod des Pools aktiv ist (`--force` hebt das auf und nimmt, falls der Standardname vergeben ist, den nächsten freien Namen wie `glm-5.3-flash-b300-2`) und nimmt eine Sperre, damit zwei Läufe auf demselben Rechner nicht gleichzeitig anlegen. Exit-Codes von `create-pod.sh`: 0 fertig, 1 Fehler oder gescheiterte Prüfung, 2 falsche Argumente (auch ein `POD_NAME`, das ohne `--force` nicht mit `POOL_PREFIX` beginnt: kein Pool-Guard würde diesen Pod je sehen), 3 ein Pod mit diesem Namen existiert oder ein Pool-Pod ist aktiv, 4 ein anderer Start/Anlegen läuft, 6 angelegt, aber die Prüfung konnte nicht laufen (auch bei einer API-Antwort in unerwarteter Form), 5 keine Kapazität (nichts angelegt; nur die Antwort „no instances available“ zählt als Kapazität, jedes andere HTTP 400 ist eine abgelehnte Anfrage). Jeden Pod kannst du später mit `./scripts/verify-pod.sh [POD_ID]` prüfen.
+`pod-terminate` löscht einen Pod dauerhaft (ohne `ARGS=--yes` zeigt es nur das Ziel); das Network Volume ist eine eigene Ressource und bleibt, Modell und Caches überleben also. `create-pod.sh` legt keinen zweiten Pod an, solange ein anderer Pod des Pools aktiv ist (`ARGS=--force` hebt das auf und nimmt, falls der Standardname vergeben ist, den nächsten freien Namen wie `glm-5.3-flash-b300-2`) und nimmt eine Sperre, damit zwei Läufe auf demselben Rechner nicht gleichzeitig anlegen. Exit-Codes von `create-pod.sh`: 0 fertig, 1 Fehler oder gescheiterte Prüfung, 2 falsche Argumente (auch ein `POD_NAME`, das ohne `--force` nicht mit `POOL_PREFIX` beginnt: kein Pool-Guard würde diesen Pod je sehen), 3 ein Pod mit diesem Namen existiert oder ein Pool-Pod ist aktiv, 4 ein anderer Start/Anlegen läuft, 6 angelegt, aber die Prüfung konnte nicht laufen (auch bei einer API-Antwort in unerwarteter Form), 5 keine Kapazität (nichts angelegt; nur die Antwort „no instances available“ zählt als Kapazität, jedes andere HTTP 400 ist eine abgelehnte Anfrage). Jeden Pod kannst du später mit `make verify ARGS=[POD_ID]` prüfen.
 
 ## 5. Den Endpunkt prüfen
 
 ```bash
-./scripts/check-endpoint.sh
+make check
 ```
 
 Sobald der Pod antwortet (`wait-for-ready.sh`), geht diese lesende Prüfung über den RunPod-HTTPS-Proxy und braucht kein SSH. Sie gibt nur Status, Modell-ID und Kontextlänge aus, nie einen Key. Sie prüft, dass:
@@ -175,13 +176,13 @@ Sobald der Pod antwortet (`wait-for-ready.sh`), geht diese lesende Prüfung übe
 - **mit deinem `VLLM_API_KEY`** sie `200` antwortet (ein `401` heißt, der Server läuft mit einem anderen Key, etwa einem unaufgelösten Secret-Platzhalter nach einem falsch geschriebenen Secret-Namen),
 - das bediente Modell `glm-5.3-flash` mit `max_model_len` 1048576 ist (ein anderer Modell-Root warnt nur).
 
-Welcher Pod: die übergebene ID (`./scripts/check-endpoint.sh <POD_ID>`), sonst der einzige **aktive Pool-Pod**, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; der gewählte Pod und der Grund werden ausgegeben, eine veraltete ID in der `.env` kann die Prüfung also nicht zu einem gestoppten Pod schicken. Sind mehrere Pool-Pods aktiv, gib die ID an (nur Kleinbuchstaben und Ziffern). Nur die `/v1`-API ist bei vLLM geschützt; `/health` und `/metrics` sind absichtlich offen. Exit-Codes: 0 alle Prüfungen bestanden, 1 eine Prüfung ist fehlgeschlagen (auch eine unerwartete Antwort im Test ohne Key), 2 falsche Argumente oder fehlender `VLLM_API_KEY`, 3 der Endpunkt antwortet nicht (fährt hoch, gestoppt oder 5xx/429/404).
+Welcher Pod: die übergebene ID (`make check ARGS=<POD_ID>`), sonst der einzige **aktive Pool-Pod**, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; der gewählte Pod und der Grund werden ausgegeben, eine veraltete ID in der `.env` kann die Prüfung also nicht zu einem gestoppten Pod schicken. Sind mehrere Pool-Pods aktiv, gib die ID an (nur Kleinbuchstaben und Ziffern). Nur die `/v1`-API ist bei vLLM geschützt; `/health` und `/metrics` sind absichtlich offen. Exit-Codes: 0 alle Prüfungen bestanden, 1 eine Prüfung ist fehlgeschlagen (auch eine unerwartete Antwort im Test ohne Key), 2 falsche Argumente oder fehlender `VLLM_API_KEY`, 3 der Endpunkt antwortet nicht (fährt hoch, gestoppt oder 5xx/429/404).
 
-**SSH ist standardmäßig aus:** Ein neuer Pod öffnet nur `8000/http`. `create-pod.sh --ssh` (oder `CREATE_POD_SSH=1` für `start-any.sh`) öffnet zusätzlich `22/tcp` und startet ssh. Das braucht in deinem RunPod-Konto hinterlegte SSH-Public-Keys und einen sshd im Container, was für dieses Image nicht verifiziert ist, und es erlaubt Root-Login: nur mit Schlüsseln nutzen.
+**SSH ist standardmäßig aus:** Ein neuer Pod öffnet nur `8000/http`. `make create ARGS=--ssh` (oder `CREATE_POD_SSH=1` für `make start`) öffnet zusätzlich `22/tcp` und startet ssh. Das braucht in deinem RunPod-Konto hinterlegte SSH-Public-Keys und einen sshd im Container, was für dieses Image nicht verifiziert ist, und es erlaubt Root-Login: nur mit Schlüsseln nutzen.
 
 ## 14/5-Zeitplan
 
-Der vorgesehene Zeitplan ist **05:00 bis 19:00 Ortszeit, Montag bis Freitag** (14 Stunden, 5 Tage). Der frühe Start ist Absicht: Nach Erfahrung des Betreibers ist eine freie B300 früh am Morgen leichter zu finden (hier nicht verifiziert; der Bestand ändert sich innerhalb von Minuten, prüfe mit `scripts/gpu-availability.sh` oder `scripts/wait-for-gpu.sh`).
+Der vorgesehene Zeitplan ist **05:00 bis 19:00 Ortszeit, Montag bis Freitag** (14 Stunden, 5 Tage). Der frühe Start ist Absicht: Nach Erfahrung des Betreibers ist eine freie B300 früh am Morgen leichter zu finden (hier nicht verifiziert; der Bestand ändert sich innerhalb von Minuten, prüfe mit `make gpu` oder `make wait-gpu`).
 
 | | Start 05:00 | Stopp 19:00 |
 |---|---|---|
@@ -190,28 +191,28 @@ Der vorgesehene Zeitplan ist **05:00 bis 19:00 Ortszeit, Montag bis Freitag** (1
 
 GitHub-Actions-Cron läuft nur in UTC, deshalb müssen die Cron-Zeilen zweimal im Jahr geändert werden (letzter Sonntag im März und im Oktober), oder du nutzt einen zeitzonenfähigen externen Scheduler.
 
-`docs/schedule.example.yml` ist bewusst **deaktiviert** und liegt außerhalb von `.github/workflows/`, damit GitHub es nie ausführt. Es zeigt die vorgesehene GitHub-Actions-Form, ohne versehentliche GPU-Kosten zu riskieren: Der Start-Job ruft `scripts/start-any.sh` auf, das die Pool-Pods nacheinander neu startet und einen neuen anlegt, wenn keiner startet, und das alle 60 s wiederholt, höchstens `MAX_WAIT_SECONDS` lang (7200 = 2 h), und dann aufgibt und den Job fehlschlagen lässt (der Pod bleibt an diesem Tag gestoppt; GitHub benachrichtigt dich in der Regel, aber nicht zuverlässig); der Job hat eine harte `timeout-minutes`-Grenze; der Stopp-Job ruft `scripts/stop-any.sh` auf; bei geplanten Läufen werden Start und Stopp aus dem Cron-Eintrag abgeleitet. Die Secrets sind `RUNPOD_API_KEY` (Schreibzugriff auf Pods) und `NETWORK_VOLUME_ID` (zum Anlegen neuer Pods nötig). **Jeder erfolgreiche Start rechnet die GPU ab**, prüfe die Datei also sorgfältig, bevor du sie aktivierst. GitHub hält pro Concurrency-Gruppe nur einen wartenden Lauf: Löse keine manuellen Läufe aus, solange ein Start noch wiederholt, sonst kann ein eingereihter Stopp verworfen werden. Cron-Läufe können sich verspäten oder ausfallen, und geplante Workflows inaktiver öffentlicher Repos werden nach 60 Tagen deaktiviert; beides ist für den Stopp-Job relevant. Verschiebe die Datei erst nach `.github/workflows/` und aktiviere sie, wenn du Actions per SHA festgelegt und den Umgang mit der europäischen Sommerzeit entschieden hast.
+`docs/schedule.example.yml` ist bewusst **deaktiviert** und liegt außerhalb von `.github/workflows/`, damit GitHub es nie ausführt. Es zeigt die vorgesehene GitHub-Actions-Form, ohne versehentliche GPU-Kosten zu riskieren: Der Start-Job ruft `make start` auf (`start-any.sh` über das Docker-Image), das die Pool-Pods nacheinander neu startet und einen neuen anlegt, wenn keiner startet, und das alle 60 s wiederholt, höchstens `MAX_WAIT_SECONDS` lang (7200 = 2 h), und dann aufgibt und den Job fehlschlagen lässt (der Pod bleibt an diesem Tag gestoppt; GitHub benachrichtigt dich in der Regel, aber nicht zuverlässig); der Job hat eine harte `timeout-minutes`-Grenze; der Stopp-Job ruft `make stop` auf; bei geplanten Läufen werden Start und Stopp aus dem Cron-Eintrag abgeleitet. `make` baut das Image selbst, ein eigener Build-Schritt entfällt also (nach dem ersten Lauf gecacht). Die Secrets sind `RUNPOD_API_KEY` (Schreibzugriff auf Pods) und `NETWORK_VOLUME_ID` (zum Anlegen neuer Pods nötig); auf dem Runner gibt es keine `.env`-Datei, das Makefile reicht diese bereits exportierten Secrets stattdessen in den Container durch. **Jeder erfolgreiche Start rechnet die GPU ab**, prüfe die Datei also sorgfältig, bevor du sie aktivierst. GitHub hält pro Concurrency-Gruppe nur einen wartenden Lauf: Löse keine manuellen Läufe aus, solange ein Start noch wiederholt, sonst kann ein eingereihter Stopp verworfen werden. Cron-Läufe können sich verspäten oder ausfallen, und geplante Workflows inaktiver öffentlicher Repos werden nach 60 Tagen deaktiviert; beides ist für den Stopp-Job relevant. Verschiebe die Datei erst nach `.github/workflows/` und aktiviere sie, wenn du Actions per SHA festgelegt und den Umgang mit der europäischen Sommerzeit entschieden hast.
 
-Alle API-Aufrufe haben Zeitlimits (10 s Verbindungsaufbau, 60 s gesamt; überschreibbar mit `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), damit eine hängende Verbindung einen geplanten Job nicht blockieren kann. Bricht die Verbindung ab, nachdem eine Start- oder Stopp-Anfrage gesendet wurde, sagen die Skripte, dass das Ergebnis unbekannt ist; prüfe vor einem neuen Versuch mit `scripts/v2-smoke.sh`.
+Alle API-Aufrufe haben Zeitlimits (10 s Verbindungsaufbau, 60 s gesamt; überschreibbar mit `API_CONNECT_TIMEOUT` / `API_MAX_TIME`), damit eine hängende Verbindung einen geplanten Job nicht blockieren kann. Bricht die Verbindung ab, nachdem eine Start- oder Stopp-Anfrage gesendet wurde, sagen die Skripte, dass das Ergebnis unbekannt ist; prüfe vor einem neuen Versuch mit `make smoke`.
 
-`scripts/pod-start.sh` und `scripts/pod-stop.sh` rufen den REST-v2-Endpunkt `POST /v2/pods/{id}/action` auf (`start`/`stop`); `runpodctl` wird nicht gebraucht, nur `curl` und `python3`. Beide zeigen zuerst das Ziel an (Name, Status, Stundenkosten, Datacenter), damit eine veraltete `RUNPOD_POD_ID` auffällt, und tun nichts, wenn der Pod schon im gewünschten Zustand ist. Ein Start rechnet die GPU sofort ab. Das Stoppen ist für einen geplanten Betrieb riskant: siehe „Wenn die GPU belegt ist“. Automatisiere keinen zerstörerischen Redeploy, bevor das genaue Migrations-/Redeploy-Verhalten im Konto getestet ist.
+`pod-start.sh` und `pod-stop.sh` (`make pod-start` / `make pod-stop`) rufen den REST-v2-Endpunkt `POST /v2/pods/{id}/action` auf (`start`/`stop`). Beide zeigen zuerst das Ziel an (Name, Status, Stundenkosten, Datacenter), damit eine veraltete `RUNPOD_POD_ID` auffällt, und tun nichts, wenn der Pod schon im gewünschten Zustand ist. Ein Start rechnet die GPU sofort ab. Das Stoppen ist für einen geplanten Betrieb riskant: siehe „Wenn die GPU belegt ist“. Automatisiere keinen zerstörerischen Redeploy, bevor das genaue Migrations-/Redeploy-Verhalten im Konto getestet ist.
 
 ## Wenn die GPU belegt ist
 
 Ein gestoppter Pod behält seine Maschinenzuordnung und läuft auf demselben Host wieder an. Mietet in der Zwischenzeit jemand anderes die GPU, kann `pod start` nicht gelingen. Beobachtet am 2026-09-24: `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; in diesem Fall wird nichts gestartet oder abgerechnet. Die RunPod-Doku beschreibt drei Wege:
 
-1. **Warten.** Die GPU wird frei, sobald der andere Nutzer seinen Pod stoppt. `./scripts/start-when-free.sh [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (Standard 7200 s, 60 s) wiederholt den eigentlichen Start, solange die GPU belegt ist, und endet nach einem Erfolg oder an der Grenze. Das ist das richtige Werkzeug für einen gestoppten Pod: Er läuft auf seiner eigenen Maschine wieder an, über die der Katalogbestand nichts aussagt, und ein fehlgeschlagener Versuch kostet nichts. `pod-start.sh` verweigert (Exit-Code 9) den Start eines Pool-Pods, solange ein anderer Pool-Pod aktiv ist, außer mit `--force`, damit eine veraltete `RUNPOD_POD_ID` keinen zweiten abrechnenden Pod starten kann (dafür nimmt es dieselbe Sperre wie `start-any.sh`/`create-pod.sh`, Exit-Code 4, falls eines davon auf diesem Rechner schon läuft); es liefert Exit-Code 5 für „GPU belegt“, 6 für „Pod nicht lesbar, nichts gesendet“ (`start-when-free.sh` wiederholt 6 bis zu 10-mal hintereinander; `start-any.sh` überspringt einen solchen Pod in dieser Runde) und 8 für eine endgültig abgelehnte Anfrage (unbekannter Pod, falscher Status, oder ein abgelehntes 4xx außer „belegt“: nichts wurde gesendet oder geändert, `start-any.sh` überspringt ihn und versucht den nächsten Pod); jeder andere Fehler bricht sofort ab, damit ein womöglich gestarteter Pod nie doppelt gestartet wird. Ein Abbruch des Laufs stoppt den laufenden Versuch, aber eine bereits gesendete Start-Anfrage lässt sich nicht zurücknehmen (das Skript sagt dann, dass du `scripts/v2-smoke.sh` prüfen sollst). **Ein erfolgreicher Start rechnet die GPU ab.** Willst du nur benachrichtigt werden und nicht starten, fragt `./scripts/wait-for-gpu.sh B300` (nimmt das Datacenter deines Pods aus `RUNPOD_POD_ID`; ein anderes nennst du ausdrücklich, mit `any` gilt der Gesamtbestand) den Bestand schreibgeschützt alle 60 s ab und läutet die Terminal-Glocke, sobald die GPU verfügbar ist; es startet nie etwas (ein Tippfehler bei GPU oder Datacenter bricht mit Exit 4 ab, statt ewig zu warten). Der Bestand ändert sich innerhalb von Minuten, handle also sofort und rechne damit, dass ein Start trotzdem scheitern kann.
+1. **Warten.** Die GPU wird frei, sobald der andere Nutzer seinen Pod stoppt. `make start-when-free ARGS='[MAX_WAIT_SECONDS] [INTERVAL_SECONDS]'` (Standard 7200 s, 60 s) wiederholt den eigentlichen Start, solange die GPU belegt ist, und endet nach einem Erfolg oder an der Grenze. Das ist das richtige Werkzeug für einen gestoppten Pod: Er läuft auf seiner eigenen Maschine wieder an, über die der Katalogbestand nichts aussagt, und ein fehlgeschlagener Versuch kostet nichts. `pod-start.sh` verweigert (Exit-Code 9) den Start eines Pool-Pods, solange ein anderer Pool-Pod aktiv ist, außer mit `ARGS=--force`, damit eine veraltete `RUNPOD_POD_ID` keinen zweiten abrechnenden Pod starten kann (dafür nimmt es dieselbe Sperre wie `start-any.sh`/`create-pod.sh`, Exit-Code 4, falls eines davon auf diesem Rechner schon läuft); es liefert Exit-Code 5 für „GPU belegt“, 6 für „Pod nicht lesbar, nichts gesendet“ (`start-when-free` wiederholt 6 bis zu 10-mal hintereinander; `start` überspringt einen solchen Pod in dieser Runde) und 8 für eine endgültig abgelehnte Anfrage (unbekannter Pod, falscher Status, oder ein abgelehntes 4xx außer „belegt“: nichts wurde gesendet oder geändert, `start` überspringt ihn und versucht den nächsten Pod); jeder andere Fehler bricht sofort ab, damit ein womöglich gestarteter Pod nie doppelt gestartet wird. Ein Abbruch des Laufs stoppt den laufenden Versuch, aber eine bereits gesendete Start-Anfrage lässt sich nicht zurücknehmen (das Skript sagt dann, dass du `make smoke` prüfen sollst). **Ein erfolgreicher Start rechnet die GPU ab.** Willst du nur benachrichtigt werden und nicht starten, fragt `make wait-gpu ARGS=B300` (nimmt das Datacenter deines Pods aus `RUNPOD_POD_ID`; ein anderes nennst du ausdrücklich, mit `any` gilt der Gesamtbestand) den Bestand schreibgeschützt alle 60 s ab und läutet die Terminal-Glocke, sobald die GPU verfügbar ist; es startet nie etwas (ein Tippfehler bei GPU oder Datacenter bricht mit Exit 4 ab, statt ewig zu warten). Der Bestand ändert sich innerhalb von Minuten, handle also sofort und rechne damit, dass ein Start trotzdem scheitern kann.
 2. **Redeploy (empfohlen mit einem Network Volume).** Einen neuen Pod anlegen, der dasselbe Volume anhängt; `/workspace` (Modell, HF- und vLLM-Caches) bleibt unberührt, und laut RunPod-Doku kann ein Network Volume an mehrere Pods angehängt werden, der gestoppte Pod muss also nicht zuerst beendet werden. RunPod wählt eine Maschine mit freier B300 im Datacenter des Volumes:
 
    ```bash
-   ./scripts/create-pod.sh          # Trockenlauf
-   ./scripts/create-pod.sh --yes    # legt an und prüft (rechnet die GPU ab)
+   make create              # Trockenlauf
+   make create ARGS=--yes   # legt an und prüft (rechnet die GPU ab)
    ```
 
-   Nutze vorher `./scripts/gpu-availability.sh`; ein Anlegen kann trotzdem wegen fehlender Kapazität scheitern (Exit-Code 5, nichts angelegt).
+   Nutze vorher `make gpu`; ein Anlegen kann trotzdem wegen fehlender Kapazität scheitern (Exit-Code 5, nichts angelegt).
 3. **Console-Migration (Beta).** Die RunPod-Console bietet an, einen gestoppten Pod auf eine Maschine mit freier GPU zu migrieren. Ihre Doku beschreibt kein Gegenstück für API oder CLI.
 
-Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`) und `GLM_URL` (Claude Code) und führe `check-endpoint.sh` erneut aus.
+Redeploy und Migration erzeugen beide eine **neue Pod-ID, IP und Proxy-URL**. Aktualisiere danach `RUNPOD_POD_ID` (lokale `.env`) und `GLM_URL` (Claude Code) und führe `make check` erneut aus.
 
 Für den 14/5-Zeitplan heißt das: Stopp/Start ist billig, kann aber über Nacht scheitern; Beenden/Neuanlegen ist robust gegen die Maschinenbindung, kann aber an der B300-Kapazität scheitern und ändert die Pod-ID täglich. Entscheide das bewusst. Ist die GPU um 05:00 belegt, wird der Start wiederholt (siehe „Warten“ oben), höchstens zwei Stunden lang; bleibt sie belegt, entfällt der Tag (nach der Grenze beginnt kein Versuch mehr; ein bereits laufender kann etwa 2 Minuten später enden).
 
@@ -222,26 +223,26 @@ Ein gestoppter Pod läuft nur auf seiner eigenen Maschine wieder an (siehe oben)
 **Der Pool wird nirgends gespeichert.** Er besteht aus allen Pods deines Kontos, deren Name mit `glm-5.3-flash-b300` **beginnt** (`POOL_PREFIX`), bei jedem Aufruf live gelesen und ohne beendete Pods. Es werden keine Pod-IDs ins Repository oder in die `.env` geschrieben, und Pods mit anderen Namen werden nie angefasst.
 
 ```bash
-./scripts/start-any.sh --dry-run    # show the pool, the order and the next name; sends nothing
-./scripts/start-any.sh --wait       # get one Pod running, then measure the time to ready
-./scripts/stop-any.sh               # stop the running pool Pod (ends the GPU billing)
+make start ARGS=--dry-run    # zeigt Pool, Reihenfolge und nächsten Namen; sendet nichts
+make start ARGS=--wait       # bringt einen Pod zum Laufen und misst dann die Zeit bis zur Bereitschaft
+make stop                    # stoppt den laufenden Pool-Pod (beendet die GPU-Abrechnung)
 ```
 
-`start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (Standard 1200 s und 30 s, Intervall mindestens 30 s) arbeitet in Runden:
+`start-any.sh [--no-create] [--dry-run] [--wait] [MAX_WAIT_SECONDS] [INTERVAL_SECONDS]` (`make start ARGS='...'`; Standard 1200 s und 30 s, Intervall mindestens 30 s) arbeitet in Runden:
 
-1. Ist schon ein Pool-Pod aktiv (jeder Status außer `EXITED`, `ERROR` und `TERMINATED`, ein unerwarteter Status zählt also auch als aktiv), tut es nichts: **nie zwei Pool-Pods gleichzeitig** (sie teilen `/workspace/vllm-cache` und würden doppelt abrechnen). Eine Kernel-Dateisperre (`POOL_LOCKFILE`, standardmäßig in `$XDG_RUNTIME_DIR` oder `/tmp`) verhindert außerdem, dass zwei Läufe auf demselben Rechner gleichzeitig starten oder anlegen (der zweite endet mit Code 4); die Sperre wird auch frei, wenn ein Lauf abgebrochen wird.
+1. Ist schon ein Pool-Pod aktiv (jeder Status außer `EXITED`, `ERROR` und `TERMINATED`, ein unerwarteter Status zählt also auch als aktiv), tut es nichts: **nie zwei Pool-Pods gleichzeitig** (sie teilen `/workspace/vllm-cache` und würden doppelt abrechnen). Eine Kernel-Dateisperre (`POOL_LOCKFILE`, standardmäßig in `$XDG_RUNTIME_DIR` oder `/tmp`) verhindert außerdem, dass zwei Läufe auf demselben Rechner gleichzeitig starten oder anlegen (der zweite endet mit Code 4); die Sperre wird auch frei, wenn ein Lauf abgebrochen wird. (Über `make` ist das die eigene Sperre des Containers, gültig für einen `docker run`; das Makefile ergänzt eine eigene Sperre auf dem Host, damit auch zwei `make start`/`make create`-Aufrufe serialisiert werden, siehe „Docker / Make“.)
 2. Es versucht, die gestoppten Pool-Pods nacheinander zu starten, den zuletzt benutzten zuerst. Ein Versuch auf einer belegten Maschine kostet nichts.
-3. Startet keiner und hat der Pool weniger als `POOL_MAX` Pods (Standard 6), legt es wie `create-pod.sh --yes` einen neuen Pod an, benannt `glm-5.3-flash-b300`, `glm-5.3-flash-b300-2` usw. (`--no-create` schaltet das ab), und prüft ihn mit `verify-pod.sh`.
+3. Startet keiner und hat der Pool weniger als `POOL_MAX` Pods (Standard 6), legt es wie `make create ARGS=--yes` einen neuen Pod an, benannt `glm-5.3-flash-b300`, `glm-5.3-flash-b300-2` usw. (`--no-create` schaltet das ab), und prüft ihn mit `verify-pod.sh`.
 4. Sonst wartet es und wiederholt. Nach `MAX_WAIT_SECONDS` beginnt kein Versuch mehr (Exit-Code 3); ein bereits laufender wird nicht abgebrochen, und bei vielen Pool-Pods kann eine Runde Minuten dauern (jeder versuchte Pod kostet bis zu drei API-Aufrufe zu je bis zu 60 s; eine Runde macht etwa 5 + 3N Aufrufe bei N gestoppten Pods).
 
-Wiederholt oder übersprungen werden nur „Maschine belegt“ (`pod-start.sh` Exit 5), „keine Kapazität“ (`create-pod.sh` Exit 5), ein vorübergehend nicht lesbarer Pod (Exit 6) und ein endgültig abgelehnter Pod (Exit 8: unbekannter Pod, falscher Status, oder ein abgelehntes 4xx außer „belegt“; nichts wurde gesendet oder geändert). Jeder andere Fehler bricht sofort ab, damit ein womöglich gestarteter oder angelegter Pod nie wiederholt wird. Besteht ein angelegter Pod die Prüfung nicht, stoppt und benennt `create-pod.sh` ihn um (siehe Schritt 4), und `start-any.sh` bricht ab, ohne etwas anderes zu versuchen. Ein Abbruch stoppt den laufenden Versuch, aber eine bereits gesendete Anfrage lässt sich nicht zurücknehmen. **Ein Erfolg rechnet die GPU ab (etwa 7,89 $/h).**
+Wiederholt oder übersprungen werden nur „Maschine belegt“ (`pod-start` Exit 5), „keine Kapazität“ (`create` Exit 5), ein vorübergehend nicht lesbarer Pod (Exit 6) und ein endgültig abgelehnter Pod (Exit 8: unbekannter Pod, falscher Status, oder ein abgelehntes 4xx außer „belegt“; nichts wurde gesendet oder geändert). Jeder andere Fehler bricht sofort ab, damit ein womöglich gestarteter oder angelegter Pod nie wiederholt wird. Besteht ein angelegter Pod die Prüfung nicht, stoppt und benennt `create-pod.sh` ihn um (siehe Schritt 4), und `start-any.sh` bricht ab, ohne etwas anderes zu versuchen. Ein Abbruch stoppt den laufenden Versuch, aber eine bereits gesendete Anfrage lässt sich nicht zurücknehmen. **Ein Erfolg rechnet die GPU ab (etwa 7,89 $/h).**
 
-Das Skript gibt ID und URL des laufenden Pods aus (`RUNPOD_POD_ID`, `GLM_URL`). Mit einem Pool muss die ID in der `.env` nicht mehr den laufenden Pod nennen; `--wait` misst genau diesen Pod (eine alte `GLM_URL` aus der `.env` wird dafür ignoriert; `READY_TIMEOUT` setzt die Wartezeit in Sekunden, Standard 3600). Später nehmen `verify-pod.sh`, `wait-for-ready.sh` und `check-endpoint.sh` von selbst den einzigen aktiven Pool-Pod und geben aus, welchen und warum; `pod-start.sh`, `pod-stop.sh` und `pod-terminate.sh` benutzen weiter `RUNPOD_POD_ID`. Läuft der Pod, aber `wait-for-ready.sh` kann die Bereitschaft nicht bestätigen, ist der Exit-Code 7, und die Meldung sagt, dass der Pod läuft und abrechnet. Nicht mehr gebrauchte Pods entfernst du mit `pod-terminate.sh` (das Volume bleibt); bei vollem Pool wird kein neuer Pod angelegt. Exit-Codes: 0 ein Pool-Pod läuft, 3 aufgegeben (nichts läuft), 4 ein anderer Start/Anlegen läuft, 7 läuft, aber Bereitschaft nicht bestätigt (`--wait`), 130 abgebrochen, 2 falsche Argumente, 1 anderer Fehler.
+Das Skript gibt ID und URL des laufenden Pods aus (`RUNPOD_POD_ID`, `GLM_URL`). Mit einem Pool muss die ID in der `.env` nicht mehr den laufenden Pod nennen; `--wait` misst genau diesen Pod (eine alte `GLM_URL` aus der `.env` wird dafür ignoriert; `READY_TIMEOUT` setzt die Wartezeit in Sekunden, Standard 3600). Später nehmen `verify`, `wait-ready` und `check` von selbst den einzigen aktiven Pool-Pod und geben aus, welchen und warum; `pod-start`, `pod-stop` und `pod-terminate` benutzen weiter `RUNPOD_POD_ID`. Läuft der Pod, aber `wait-for-ready.sh` kann die Bereitschaft nicht bestätigen, ist der Exit-Code 7, und die Meldung sagt, dass der Pod läuft und abrechnet. Nicht mehr gebrauchte Pods entfernst du mit `make pod-terminate ARGS=--yes` (das Volume bleibt); bei vollem Pool wird kein neuer Pod angelegt. Exit-Codes: 0 ein Pool-Pod läuft, 3 aufgegeben (nichts läuft), 4 ein anderer Start/Anlegen läuft, 7 läuft, aber Bereitschaft nicht bestätigt (`--wait`), 130 abgebrochen, 2 falsche Argumente, 1 anderer Fehler.
 
 ## Kosten stoppen
 
-- `pod-stop.sh` (ein Pod) und `stop-any.sh` (jeder aktive Pool-Pod; es versucht das Lesen der Pod-Liste bis zu fünfmal, `STOP_LIST_TRIES` und `STOP_RETRY_DELAY`, bevor es aufgibt) beenden die GPU-Abrechnung. Laut RunPod-Preisdoku wird ein gestoppter Pod nicht für seine Container-Disk berechnet (nur für eine Pod-lokale Volume-Disk, zu einem höheren Satz); das Network Volume wird getrennt abgerechnet (etwa 0,07 $/GB/Monat), egal ob ein Pod läuft.
-- `pod-terminate.sh --yes` löscht einen Pod dauerhaft. Es löscht das Network Volume **nicht**, Modell und Caches bleiben also erhalten.
+- `make pod-stop` (ein Pod) und `make stop` (jeder aktive Pool-Pod; es versucht das Lesen der Pod-Liste bis zu fünfmal, `STOP_LIST_TRIES` und `STOP_RETRY_DELAY`, bevor es aufgibt) beenden die GPU-Abrechnung. Laut RunPod-Preisdoku wird ein gestoppter Pod nicht für seine Container-Disk berechnet (nur für eine Pod-lokale Volume-Disk, zu einem höheren Satz); das Network Volume wird getrennt abgerechnet (etwa 0,07 $/GB/Monat), egal ob ein Pod läuft.
+- `make pod-terminate ARGS=--yes` löscht einen Pod dauerhaft. Es löscht das Network Volume **nicht**, Modell und Caches bleiben also erhalten.
 
 ## Optional: Runpod-MCP-Server
 
@@ -278,7 +279,7 @@ Faustregeln:
 ./scripts/claude-glm.sh
 ```
 
-Es löst den Pod auf (der einzige aktive Pool-Pod, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; die Wahl und der Grund werden ausgegeben), wartet, bis `/v1/models` mit deinem Key tatsächlich `200` antwortet (`READY_RETRIES` / `READY_DELAY`, Standard 5 / 5 s, damit ein nach einem Start noch warmlaufender RunPod-Proxy die Sitzung nicht gleich scheitern lässt), setzt dann die Umgebung unten und ersetzt sich durch `claude --model glm-5.3-flash`, alle Argumente werden durchgereicht. Es startet oder legt nie einen Pod an; läuft keiner, sagt es das und verweist auf `scripts/start-any.sh`. Exit-Codes: 1 kein Pool-Pod läuft (oder der Endpunkt wurde nie bereit, oder mehrere Pool-Pods sind aktiv), 2 `VLLM_API_KEY` nicht gesetzt, 127 `claude` nicht gefunden; sonst ist es der Exit-Code von `claude` selbst.
+Es löst den Pod auf (der einzige aktive Pool-Pod, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; die Wahl und der Grund werden ausgegeben), wartet, bis `/v1/models` mit deinem Key tatsächlich `200` antwortet (`READY_RETRIES` / `READY_DELAY`, Standard 5 / 5 s, damit ein nach einem Start noch warmlaufender RunPod-Proxy die Sitzung nicht gleich scheitern lässt), setzt dann die Umgebung unten und ersetzt sich durch `claude --model glm-5.3-flash`, alle Argumente werden durchgereicht. Es startet oder legt nie einen Pod an; läuft keiner, sagt es das und verweist auf `make start`. Exit-Codes: 1 kein Pool-Pod läuft (oder der Endpunkt wurde nie bereit, oder mehrere Pool-Pods sind aktiv), 2 `VLLM_API_KEY` nicht gesetzt, 127 `claude` nicht gefunden; sonst ist es der Exit-Code von `claude` selbst.
 
 Von Hand gleichwertig, ohne die Bereitschaftsprüfung:
 
@@ -318,13 +319,12 @@ Werte, die der Betreiber am validierten Deployment gemessen hat (B300, `--safete
 Jede Gesamtzeit wurde **einmal** gemessen. Der neue Pod lief auf einer Maschine, auf der er zuvor nicht lief, Image und Container-Aufbau sind also enthalten; ein Download der Gewichte steckt in keiner der beiden Zeiten. Der Neustart eines gestoppten Pods auf seiner alten Maschine war etwa vier Minuten schneller (plausibel, weil das Image dort schon liegt, was nicht gemessen ist). Miss es selbst mit:
 
 ```bash
-set -a; source .env; set +a
-./scripts/start-when-free.sh 1200 30 && ./scripts/wait-for-ready.sh
+make start-when-free ARGS='1200 30' && make wait-ready
 ```
 
-`start-when-free.sh` wiederholt den Start alle 30 s bis zu 1200 s (20 Minuten), solange die GPU belegt ist, und endet nach dem ersten erfolgreichen Start; das Intervall muss mindestens 30 s betragen, und `pod-start.sh` rufst du nicht extra auf. Wegen des `&&` beginnt die Messung erst nach einem erfolgreichen Start und nie, wenn der Start gescheitert ist. Für einen einzelnen Versuch ohne Wiederholung nimm stattdessen `./scripts/pod-start.sh && ./scripts/wait-for-ready.sh`. `wait-for-ready.sh` braucht `VLLM_API_KEY` und `RUNPOD_POD_ID` (oder `GLM_URL`) in deiner `.env`; ohne den Key bricht es ab, nachdem der Pod schon gestartet ist und abrechnet. **Ein erfolgreicher Start rechnet die GPU ab.**
+`start-when-free.sh` wiederholt den Start alle 30 s bis zu 1200 s (20 Minuten), solange die GPU belegt ist, und endet nach dem ersten erfolgreichen Start; das Intervall muss mindestens 30 s betragen, und `pod-start` rufst du nicht extra auf. Wegen des `&&` beginnt die Messung erst nach einem erfolgreichen Start und nie, wenn der Start gescheitert ist. Für einen einzelnen Versuch ohne Wiederholung nimm stattdessen `make pod-start && make wait-ready`. `wait-for-ready.sh` braucht `VLLM_API_KEY` und `RUNPOD_POD_ID` (oder `GLM_URL`) in deiner `.env`; ohne den Key bricht es ab, nachdem der Pod schon gestartet ist und abrechnet. **Ein erfolgreicher Start rechnet die GPU ab.**
 
-`wait-for-ready.sh` fragt `/v1/models` mit deinem `VLLM_API_KEY` ab (für den einzigen aktiven Pool-Pod, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; die Wahl wird ausgegeben), gibt die verstrichene Zeit aus und hängt sie an `.startup-times.log` an (git-ignoriert, mit `source=startedAt` oder `source=script`). Die Uhr startet bei `startedAt` des Pods aus der API (braucht `RUNPOD_API_KEY` und die Pod-ID aus der Proxy-URL oder `RUNPOD_POD_ID`), das Ergebnis hängt also nicht davon ab, wann du das Skript startest; die API hat `startedAt` bei einem Neustart in der Messung vom 2026-09-26 aktualisiert, und deine lokale Uhr muss stimmen. Andernfalls sagt das Skript das und zählt ab seinem eigenen Start. Die Auflösung ist das Abfrageintervall (standardmäßig 15 s). Es liest nur. Jede Antwort außer 200 und 401/403 zählt als „noch nicht bereit“ (der RunPod-Proxy antwortet 502/524, während der Container hochfährt; auch 404, 500 und Verbindungsfehler werden wiederholt); 401/403 bricht ab, weil sich der Key nicht von selbst korrigiert. Antwortet der Pod schon bei der ersten Abfrage, wird nichts protokolliert (er lief bereits); war er beim Start des Skripts schon `STARTING`, ist die protokollierte Zeit nur teilweise. `GLM_URL` darf auf `/v1` enden, das wird entfernt. `VLLM_ENGINE_READY_TIMEOUT_S=3600` ist eine großzügige Grenze, kein Messwert.
+`wait-for-ready.sh` fragt `/v1/models` mit deinem `VLLM_API_KEY` ab (für den einzigen aktiven Pool-Pod, sonst `RUNPOD_POD_ID`, sonst `GLM_URL`; die Wahl wird ausgegeben), gibt die verstrichene Zeit aus und hängt sie an `.startup-times.log` an (git-ignoriert, mit `source=startedAt` oder `source=script`; `make wait-ready` mountet genau diese Datei read-write, damit sie den Container überlebt, der sie geschrieben hat). Die Uhr startet bei `startedAt` des Pods aus der API (braucht `RUNPOD_API_KEY` und die Pod-ID aus der Proxy-URL oder `RUNPOD_POD_ID`), das Ergebnis hängt also nicht davon ab, wann du das Skript startest; die API hat `startedAt` bei einem Neustart in der Messung vom 2026-09-26 aktualisiert, und deine lokale Uhr muss stimmen. Andernfalls sagt das Skript das und zählt ab seinem eigenen Start. Die Auflösung ist das Abfrageintervall (standardmäßig 15 s). Es liest nur. Jede Antwort außer 200 und 401/403 zählt als „noch nicht bereit“ (der RunPod-Proxy antwortet 502/524, während der Container hochfährt; auch 404, 500 und Verbindungsfehler werden wiederholt); 401/403 bricht ab, weil sich der Key nicht von selbst korrigiert. Antwortet der Pod schon bei der ersten Abfrage, wird nichts protokolliert (er lief bereits); war er beim Start des Skripts schon `STARTING`, ist die protokollierte Zeit nur teilweise. `GLM_URL` darf auf `/v1` enden, das wird entfernt. `VLLM_ENGINE_READY_TIMEOUT_S=3600` ist eine großzügige Grenze, kein Messwert.
 
 ## Lizenz
 
