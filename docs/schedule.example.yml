@@ -5,7 +5,7 @@
 #   summer (CEST, UTC+2): start 03:00 UTC, stop 17:00 UTC
 #   winter (CET,  UTC+1): start 04:00 UTC, stop 18:00 UTC
 # DST means you should either adjust the cron seasonally or use an external timezone-aware scheduler.
-# The start job runs `make start` (start-any.sh through the Docker image, see the Makefile/README):
+# The start job runs `make start` (start-any.sh through the Docker image, see the Makefile/docs/guide.md):
 # it restarts the pool Pods one after the other and creates a new one if none can start (up to
 # MAX_WAIT_SECONDS); a failed attempt costs nothing. The stop job runs `make stop`. `make` builds
 # the image first; a GitHub-hosted runner is a fresh VM each time, so it rebuilds from scratch on

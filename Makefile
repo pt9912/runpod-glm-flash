@@ -14,7 +14,7 @@
 #
 # Exit codes: GNU Make itself always exits 0 (success) or 2 (any recipe failure) -- verified, it
 # does NOT preserve a recipe's actual exit code -- so the fine-grained codes documented in the
-# README (5, 6, 8, 9, ...) are not visible in `$?` after a `make` invocation. Every target writes
+# docs/guide.md (5, 6, 8, 9, ...) are not visible in `$?` after a `make` invocation. Every target writes
 # its real code to a PER-TARGET file, .make-exit-code.<target> (git-ignored), so scripting around
 # `make` can still read it: `make check; rc=$$(cat .make-exit-code.check)`. Per-target, not one
 # shared file: two DIFFERENT targets running at the same time (e.g. a monitoring loop's `make

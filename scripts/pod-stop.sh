@@ -30,7 +30,7 @@ if [ "$status_uc" = "EXITED" ]; then
 fi
 
 # Stopping releases the GPU (billing stops) but keeps the Pod tied to its machine:
-# another user may rent the GPU meanwhile, see README "If the GPU is occupied".
+# another user may rent the GPU meanwhile, see docs/guide.md "If the GPU is occupied".
 set +e
 out="$(api_post "/pods/$RUNPOD_POD_ID/action" '{"action":"stop"}' 2>&1)"
 rc=$?

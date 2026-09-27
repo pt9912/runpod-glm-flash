@@ -113,9 +113,9 @@ if [ "$rc" -ne 0 ]; then
         occupied=1
         cat >&2 <<HINT
 The GPU on this Pod's machine is occupied by someone else (nothing was started, nothing is billed).
-Options: wait and retry, or redeploy with the same volume; see README "If the GPU is occupied":
-  - be notified when a B300 is free there: scripts/wait-for-gpu.sh B300 $dc_hint
-  - redeploy with the same volume: scripts/create-pod.sh (dry run first, then --yes)
+Options: wait and retry, or redeploy with the same volume; see docs/guide.md "If the GPU is occupied":
+  - be notified when a B300 is free there: make wait-gpu ARGS='B300 $dc_hint'
+  - redeploy with the same volume: make create (dry run first, then ARGS=--yes)
 A redeploy changes the Pod ID; update RUNPOD_POD_ID and GLM_URL afterwards.
 HINT
       else

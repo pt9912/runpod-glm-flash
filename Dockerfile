@@ -2,7 +2,7 @@
 # artifact goes into this repo, so there is no build stage here either: vLLM/GLM never run in
 # this image, only on the RunPod Pod itself; this image only talks to the RunPod REST API from
 # outside. It does NOT include scripts/claude-glm.sh's job (that execs the `claude` CLI on your
-# machine and is meant to run there directly, not containerized); see the README.
+# machine and is meant to run there directly, not containerized); see docs/guide.md.
 # Pinned by digest (not just the tag) and by exact package version, so a rebuild weeks later
 # cannot silently pick up a different Alpine/Python point release or package build.
 FROM python:3.13-alpine@sha256:79e7a9b9ff1cbceff819f856fb374477792a5967759d94df266de7b7b4120e6f
