@@ -367,9 +367,9 @@ behavior has been tested on the account.
 ## If the GPU is occupied
 
 A stopped Pod keeps its machine assignment and resumes on the same host. If someone else rents the
-GPU meanwhile, `pod start` cannot succeed. Observed on 2026-09-24: `HTTP 400 {"detail":"There are
-not enough free GPUs on the host machine to start this pod."}`; nothing is started or billed in that
-case. RunPod's docs describe three options:
+GPU meanwhile, `pod start` cannot succeed: `HTTP 400 {"detail":"There are not enough free GPUs on
+the host machine to start this pod."}`; nothing is started or billed in that case. RunPod's docs
+describe three options:
 
 1. **Wait.** The GPU frees up once the other user stops their Pod. `make start-when-free
    ARGS='[MAX_WAIT_SECONDS] [INTERVAL_SECONDS]'` (defaults 7200 s, 60 s) retries the actual start
@@ -558,12 +558,35 @@ session outright), then sets the environment below and execs `claude --model glm
 through any arguments. It never starts or creates a Pod; if none is running it says so and points at
 `make start`.
 
+```bash
+./scripts/claude-glm.sh --resume
+./scripts/claude-glm.sh -p "Fix the failing test"
+```
+
 | Exit code | Meaning |
 |---|---|
 | 1 | no pool Pod running (or the endpoint never became ready, or several pool Pods are active) |
 | 2 | `VLLM_API_KEY` not set |
 | 127 | `claude` not found |
 | (other) | `claude`'s own exit code |
+
+The script does not `cd` anywhere and reads no `.env` file itself, so it can be invoked from any
+working directory — from another repo, for example — as long as the required variables are already
+exported in that shell:
+
+```bash
+RUNPOD_GLM=/path/to/runpod-glm
+set -a; source "$RUNPOD_GLM/.env"; set +a   # only if the variables live in this repo's .env
+"$RUNPOD_GLM/scripts/claude-glm.sh"
+```
+
+`claude` still picks up the directory you run it from as its own project context, independent of
+where the script lives.
+
+Running the script several times, in parallel or from different shells, starts that many separate
+`claude` sessions; there is no per-invocation isolation beyond what Claude Code itself provides. All
+of them resolve to, and share, the same Pod/endpoint (`$URL`), so they compete for the same GPU
+capacity (see "vLLM concurrency note" below).
 
 Equivalent by hand, without the readiness check:
 
@@ -584,9 +607,8 @@ first token with a very long context can otherwise hit that limit.
 
 ## vLLM concurrency note
 
-`--max-num-seqs 6` matches the previously validated Pod (its configuration was read via the API on
-2026-09-24). It caps concurrent sequences, which bounds KV-cache use with the 1M context; do not
-raise it without measuring memory and latency on the Pod.
+`--max-num-seqs 6` (set in `create-pod.sh`) caps concurrent sequences, which bounds KV-cache use with
+the 1M context; do not raise it without measuring memory and latency on the Pod.
 
 ## vLLM memory note
 

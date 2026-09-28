@@ -385,7 +385,7 @@ Redeploy, bevor das genaue Migrations-/Redeploy-Verhalten im Konto getestet ist.
 ## Wenn die GPU belegt ist
 
 Ein gestoppter Pod behält seine Maschinenzuordnung und läuft auf demselben Host wieder an. Mietet in
-der Zwischenzeit jemand anderes die GPU, kann `pod start` nicht gelingen. Beobachtet am 2026-09-24:
+der Zwischenzeit jemand anderes die GPU, kann `pod start` nicht gelingen:
 `HTTP 400 {"detail":"There are not enough free GPUs on the host machine to start this pod."}`; in
 diesem Fall wird nichts gestartet oder abgerechnet. Die RunPod-Doku beschreibt drei Wege:
 
@@ -583,12 +583,35 @@ warmlaufender RunPod-Proxy die Sitzung nicht gleich scheitern lässt), setzt dan
 und ersetzt sich durch `claude --model glm-5.3-flash`, alle Argumente werden durchgereicht. Es
 startet oder legt nie einen Pod an; läuft keiner, sagt es das und verweist auf `make start`.
 
+```bash
+./scripts/claude-glm.sh --resume
+./scripts/claude-glm.sh -p "Fix the failing test"
+```
+
 | Exit-Code | Bedeutung |
 |---|---|
 | 1 | kein Pool-Pod läuft (oder der Endpunkt wurde nie bereit, oder mehrere Pool-Pods sind aktiv) |
 | 2 | `VLLM_API_KEY` nicht gesetzt |
 | 127 | `claude` nicht gefunden |
 | (sonst) | der Exit-Code von `claude` selbst |
+
+Das Skript wechselt nirgendwohin das Verzeichnis und lädt selbst keine `.env`-Datei, lässt sich also
+aus jedem Arbeitsverzeichnis heraus aufrufen — etwa aus einem anderen Repo — vorausgesetzt, die
+nötigen Variablen sind in dieser Shell bereits exportiert:
+
+```bash
+RUNPOD_GLM=/pfad/zu/runpod-glm
+set -a; source "$RUNPOD_GLM/.env"; set +a   # nur nötig, wenn die Variablen in dieser .env liegen
+"$RUNPOD_GLM/scripts/claude-glm.sh"
+```
+
+`claude` selbst nimmt weiterhin das Verzeichnis, aus dem du es aufrufst, als eigenen Projektkontext
+— unabhängig davon, wo das Skript liegt.
+
+Rufst du das Skript mehrfach auf, parallel oder aus verschiedenen Shells, startet das ebenso viele
+getrennte `claude`-Sitzungen; es gibt keine Isolation pro Aufruf über das hinaus, was Claude Code
+selbst mitbringt. Alle lösen sich auf denselben Pod/Endpunkt (`$URL`) auf und teilen sich dessen
+GPU-Kapazität (siehe „Hinweis zur vLLM-Parallelität" unten).
 
 Von Hand gleichwertig, ohne die Bereitschaftsprüfung:
 
@@ -610,9 +633,8 @@ dieses Limit stoßen.
 
 ## Hinweis zur vLLM-Parallelität
 
-`--max-num-seqs 6` entspricht dem zuvor validierten Pod (seine Konfiguration wurde am 2026-09-24
-über die API gelesen). Es begrenzt die gleichzeitigen Sequenzen und damit die KV-Cache-Nutzung beim
-1M-Kontext; erhöhe es nicht, ohne Speicher und Latenz auf dem Pod zu messen.
+`--max-num-seqs 6` (gesetzt in `create-pod.sh`) begrenzt die gleichzeitigen Sequenzen und damit die
+KV-Cache-Nutzung beim 1M-Kontext; erhöhe es nicht, ohne Speicher und Latenz auf dem Pod zu messen.
 
 ## Hinweis zum vLLM-Speicher
 
