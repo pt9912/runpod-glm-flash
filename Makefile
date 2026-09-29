@@ -59,7 +59,7 @@ LOCKED     := flock -n -E 99 "$(LOCK_FILE)"
 # .make-exit-code.NAME and re-raises it so make's own success/failure detection is unaffected.
 CAPTURE = ; rc=$$?; echo "$$rc" > "$(CURDIR)/.make-exit-code.$(1)"; exit $$rc
 
-.PHONY: help build precheck smoke gpu wait-gpu verify check wait-ready stop pod-stop pod-terminate \
+.PHONY: help build precheck smoke gpu wait-gpu verify check logs wait-ready stop pod-stop pod-terminate \
         create start pod-start start-when-free abort
 
 # Lists every target below that carries a trailing `## ...` comment, in the order they appear in
@@ -90,6 +90,8 @@ verify: build ## Check that a Pod matches what this repo intends
 	$(DOCKER_RUN) bash scripts/verify-pod.sh $(ARGS)$(call CAPTURE,verify)
 check: build ## Check a running Pod's endpoint: protected, serving the right model
 	$(DOCKER_RUN) bash scripts/check-endpoint.sh $(ARGS)$(call CAPTURE,check)
+logs: build ## Stream a Pod's container/system logs live (Ctrl-C to stop); ARGS='[POD_ID] [--source ...] [--tail N]'
+	$(DOCKER_RUN) bash scripts/pod-logs.sh $(ARGS)$(call CAPTURE,logs)
 wait-ready: build ## Wait until vLLM answers, measure and log the startup time
 	@touch "$(LOG_FILE)"
 	$(DOCKER_RUN_BASE) -v "$(LOG_FILE):/app/.startup-times.log" $(IMAGE) bash scripts/wait-for-ready.sh $(ARGS)$(call CAPTURE,wait-ready)
