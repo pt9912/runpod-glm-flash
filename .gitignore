@@ -28,6 +28,10 @@ secrets.yml
 *.pem
 *.key
 
+# Claude Code local settings (per-machine permission overrides, e.g. allowed Bash commands; not
+# shared project config, never commit)
+.claude/settings.local.json
+
 # Editor / OS
 .vscode/
 .idea/
