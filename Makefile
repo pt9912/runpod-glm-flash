@@ -59,61 +59,68 @@ LOCKED     := flock -n -E 99 "$(LOCK_FILE)"
 # .make-exit-code.NAME and re-raises it so make's own success/failure detection is unaffected.
 CAPTURE = ; rc=$$?; echo "$$rc" > "$(CURDIR)/.make-exit-code.$(1)"; exit $$rc
 
-.PHONY: build precheck smoke gpu wait-gpu verify check wait-ready stop pod-stop pod-terminate \
+.PHONY: help build precheck smoke gpu wait-gpu verify check wait-ready stop pod-stop pod-terminate \
         create start pod-start start-when-free abort
+
+# Lists every target below that carries a trailing `## ...` comment, in the order they appear in
+# this file (not alphabetically), so the grouping into read-only/single-Pod actions vs. the
+# Pod-starting ones (see the comments above each block) stays visible. Bare `make` still runs
+# `build` (the first target, i.e. the default goal) unchanged; run `make help` explicitly.
+help: ## Show this list of targets
+	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 # Clears the exit-code file(s) of whatever target(s) were actually requested (MAKECMDGOALS is
 # the goal list from the command line, e.g. "create" for `make create ARGS=--yes`) before
 # anything else: if the build itself fails below, make stops right here, so those files are
 # simply gone rather than left holding a stale success code from an earlier, unrelated run.
-build:
+build: ## Build the Docker image (a dependency of every target below, rarely called on its own)
 	@for t in $(MAKECMDGOALS); do rm -f "$(CURDIR)/.make-exit-code.$$t"; done
 	docker build -t $(IMAGE) .
 
 # ---- read-only or single-Pod actions: never race a create/start, no host lock needed
-precheck: build
+precheck: build ## Check tools, environment and local files (ARGS=--online adds one read-only API call)
 	$(DOCKER_RUN) bash scripts/pre-check.sh $(ARGS)$(call CAPTURE,precheck)
-smoke: build
+smoke: build ## Quick smoke test of the RunPod v2 API client
 	$(DOCKER_RUN) bash scripts/v2-smoke.sh$(call CAPTURE,smoke)
-gpu: build
+gpu: build ## Show current GPU stock (ARGS='TYPE DATACENTER' to filter, e.g. ARGS='B300 EU-NL-1')
 	$(DOCKER_RUN) bash scripts/gpu-availability.sh $(ARGS)$(call CAPTURE,gpu)
-wait-gpu: build
+wait-gpu: build ## Poll GPU stock until the requested GPU is available
 	$(DOCKER_RUN) bash scripts/wait-for-gpu.sh $(ARGS)$(call CAPTURE,wait-gpu)
-verify: build
+verify: build ## Check that a Pod matches what this repo intends
 	$(DOCKER_RUN) bash scripts/verify-pod.sh $(ARGS)$(call CAPTURE,verify)
-check: build
+check: build ## Check a running Pod's endpoint: protected, serving the right model
 	$(DOCKER_RUN) bash scripts/check-endpoint.sh $(ARGS)$(call CAPTURE,check)
-wait-ready: build
+wait-ready: build ## Wait until vLLM answers, measure and log the startup time
 	@touch "$(LOG_FILE)"
 	$(DOCKER_RUN_BASE) -v "$(LOG_FILE):/app/.startup-times.log" $(IMAGE) bash scripts/wait-for-ready.sh $(ARGS)$(call CAPTURE,wait-ready)
-stop: build
+stop: build ## Stop every active pool Pod (ends GPU billing)
 	$(DOCKER_RUN) bash scripts/stop-any.sh$(call CAPTURE,stop)
-pod-stop: build
+pod-stop: build ## Stop the Pod RUNPOD_POD_ID
 	$(DOCKER_RUN) bash scripts/pod-stop.sh$(call CAPTURE,pod-stop)
-pod-terminate: build
+pod-terminate: build ## Permanently delete the Pod RUNPOD_POD_ID (cannot be undone)
 	$(DOCKER_RUN) bash scripts/pod-terminate.sh $(ARGS)$(call CAPTURE,pod-terminate)
 
 # ---- these can START or CREATE a Pod (GPU billing): serialized on the host, named for `make abort`
-create: build
+create: build ## Create a new Pod (ARGS=--yes to actually create and bill the GPU; omit for a dry run)
 	$(LOCKED) $(DOCKER_RUN_BASE) --name runpod-glm-create $(IMAGE) bash scripts/create-pod.sh $(ARGS); rc=$$?; \
 	  [ "$$rc" -ne 99 ] || echo "Another create/start is already running on this machine. Find it: docker ps --filter name=runpod-glm-   Stop it: make abort" >&2; \
 	  echo "$$rc" > "$(CURDIR)/.make-exit-code.create"; exit "$$rc"
-start: build
+start: build ## Start or create one pool Pod (ARGS=--wait to wait until ready)
 	$(LOCKED) $(DOCKER_RUN_BASE) --name runpod-glm-start $(IMAGE) bash scripts/start-any.sh $(ARGS); rc=$$?; \
 	  [ "$$rc" -ne 99 ] || echo "Another create/start is already running on this machine. Find it: docker ps --filter name=runpod-glm-   Stop it: make abort" >&2; \
 	  echo "$$rc" > "$(CURDIR)/.make-exit-code.start"; exit "$$rc"
-pod-start: build
+pod-start: build ## Start the stopped Pod RUNPOD_POD_ID
 	$(LOCKED) $(DOCKER_RUN_BASE) --name runpod-glm-pod-start $(IMAGE) bash scripts/pod-start.sh $(ARGS); rc=$$?; \
 	  [ "$$rc" -ne 99 ] || echo "Another create/start is already running on this machine. Find it: docker ps --filter name=runpod-glm-   Stop it: make abort" >&2; \
 	  echo "$$rc" > "$(CURDIR)/.make-exit-code.pod-start"; exit "$$rc"
-start-when-free: build
+start-when-free: build ## Start the stopped Pod RUNPOD_POD_ID, retrying while its GPU is occupied
 	$(LOCKED) $(DOCKER_RUN_BASE) --name runpod-glm-start-when-free $(IMAGE) bash scripts/start-when-free.sh $(ARGS); rc=$$?; \
 	  [ "$$rc" -ne 99 ] || echo "Another create/start is already running on this machine. Find it: docker ps --filter name=runpod-glm-   Stop it: make abort" >&2; \
 	  echo "$$rc" > "$(CURDIR)/.make-exit-code.start-when-free"; exit "$$rc"
 
 # Finds whichever of the four named containers above is running (there is at most one, the host
 # lock guarantees that) and stops it. The correct way to cancel a create/start; see the header.
-abort:
+abort: ## Stop a stuck create/start/pod-start/start-when-free container
 	@cid="$$(docker ps -q --filter 'name=^/runpod-glm-(create|start|pod-start|start-when-free)$$')"; \
 	if [ -z "$$cid" ]; then echo "Nothing to abort: no runpod-glm-* container is running."; exit 0; fi; \
 	docker ps --filter "id=$$cid" --format 'Stopping: {{.Names}} ({{.ID}}), running for {{.RunningFor}}'; \
