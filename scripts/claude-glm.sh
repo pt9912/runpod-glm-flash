@@ -73,4 +73,11 @@ export ANTHROPIC_BASE_URL="$URL"
 export ANTHROPIC_AUTH_TOKEN="$VLLM_API_KEY"
 unset ANTHROPIC_API_KEY
 export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576
+# --model only sets the main conversation model. Background functionality (title/summary
+# generation, and other internal calls that resolve through the haiku/sonnet/opus aliases) uses
+# these separately and otherwise falls back to a real Anthropic model id (e.g. claude-sonnet-5),
+# which this server 404s on since it only serves glm-5.3-flash.
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3-flash
+export ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.3-flash
+export ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.3-flash
 exec claude --model glm-5.3-flash "$@"

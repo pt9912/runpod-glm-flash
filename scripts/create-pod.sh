@@ -127,7 +127,19 @@ cmd = ["nota-ai/GLM-5.3-Flash-Nota-NVFP4", "--served-model-name", "glm-5.3-flash
        "--speculative-config", "{\"method\":\"mtp\",\"num_speculative_tokens\":5}"]
 body = {
     "name": e["POD_NAME"],
-    "image": "vllm/vllm-openai:glm53-flash",
+    # Pinned by digest, not the floating "glm53-flash" tag: that tag (and its -cuXXX variants)
+    # was frozen on Docker Hub at its 2026-09-09 nightly build and never updated again. This
+    # digest is nightly-a9eafde59cbd55182dc2265cc398b7186f0a0eaa (2026-09-27), verified (git
+    # compare) to be 8 commits after vllm-project/vllm#58846 ("Bump FlashKDA to keep the
+    # recurrent state in fp32"), merged 2026-09-26: before that fix, the FlashKDA K2 kernel stored
+    # the KDA recurrent state (34 of the 45 GLM-5.3-Flash layers use KDA linear attention) in bf16
+    # and rounded it every 16-token tile; the error accumulated across chunked-prefill boundaries
+    # on long prefills and surfaced as corrupted long-context tool-call output -- which is what
+    # motivated this pin. No stable vLLM release contains the fix yet (v0.30.0, 2026-09-22,
+    # predates it), so this is deliberately a nightly, not a stable tag. Still open and NOT fixed
+    # by this pin: vllm-project/vllm#59115, an illegal-memory-access crash on long-context
+    # chunked prefill with MTP, reproduced on 2026-09-29 even on v0.30.0.
+    "image": "vllm/vllm-openai@sha256:9772fae97311cfa07b264c317ce40c9167dc60f79f1476244aa3a05c0be5b553",
     "cmd": cmd,
     "env": env,
     "ports": ["8000/http"] + (["22/tcp"] if e["SSH"] == "1" else []),

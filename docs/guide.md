@@ -16,7 +16,10 @@ All commands below are run from the repository root unless a block says otherwis
   managed with `make start` / `make stop`.
 - **API base:** `https://api.runpod.io/v2` (used by all scripts)
 - **Pod:** Secure Cloud, 1× NVIDIA B300 SXM6 AC
-- **Image:** `vllm/vllm-openai:glm53-flash`
+- **Image:** `vllm/vllm-openai@sha256:9772fae97311cfa07b264c317ce40c9167dc60f79f1476244aa3a05c0be5b553`
+  (nightly-a9eafde59cbd55182dc2265cc398b7186f0a0eaa, 2026-09-27; pinned by digest, not the
+  `glm53-flash` tag, which was frozen at its 2026-09-09 build and never updated. See the comment
+  above `"image"` in `create-pod.sh` for why.)
 - **Persistent data:** existing Network Volume mounted at `/workspace`
 - **Model:** `nota-ai/GLM-5.3-Flash-Nota-NVFP4`
 - **Context:** 1,048,576
@@ -556,7 +559,11 @@ and why are printed), waits until `/v1/models` actually answers `200` with your 
 / `READY_DELAY`, default 5 / 5 s, so a RunPod proxy still warming up after a start does not fail the
 session outright), then sets the environment below and execs `claude --model glm-5.3-flash`, passing
 through any arguments. It never starts or creates a Pod; if none is running it says so and points at
-`make start`.
+`make start`. It also pins the haiku/sonnet/opus model aliases to `glm-5.3-flash` (see the
+environment below): `--model` only sets the main conversation model, and Claude Code's background
+functionality (title/summary generation, and other internal calls resolved through those aliases)
+otherwise falls back to a real Anthropic model id, which 404s against a server that only serves
+`glm-5.3-flash`.
 
 ```bash
 ./scripts/claude-glm.sh --resume
@@ -596,6 +603,12 @@ export ANTHROPIC_BASE_URL="${GLM_URL%/}"
 export ANTHROPIC_AUTH_TOKEN="$VLLM_API_KEY"
 unset ANTHROPIC_API_KEY
 export CLAUDE_CODE_MAX_CONTEXT_TOKENS=1048576
+# --model only sets the main conversation model; background functionality (title/summary
+# generation, and other internal calls resolved through the haiku/sonnet/opus aliases) otherwise
+# falls back to a real Anthropic model id and 404s against this server. See "Claude Code" below.
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=glm-5.3-flash
+export ANTHROPIC_DEFAULT_SONNET_MODEL=glm-5.3-flash
+export ANTHROPIC_DEFAULT_OPUS_MODEL=glm-5.3-flash
 claude --model glm-5.3-flash
 ```
 
