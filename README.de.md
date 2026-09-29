@@ -26,7 +26,8 @@ make create ARGS=--yes   # legt den Pod an und prüft ihn (rechnet die GPU ab, e
 make wait-ready           # wartet, bis vLLM antwortet, misst die Startzeit
 make check                # bestätigt, dass der Endpunkt geschützt ist und das richtige Modell bedient
 
-make start ARGS=--wait    # jeden Tag danach: startet oder legt einen Pool-Pod an, wartet bis bereit
+make start ARGS=--wait    # jeden Tag danach: startet oder legt einen Pool-Pod an, wartet bis zu 20 Min
+                           # bei belegter GPU, dann bis der Pod bereit ist
 make stop                 # wenn fertig (beendet die GPU-Abrechnung)
 ```
 

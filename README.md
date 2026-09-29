@@ -26,7 +26,8 @@ make create ARGS=--yes   # creates the Pod and verifies it (bills the GPU, about
 make wait-ready           # waits until vLLM answers, measures the start time
 make check                # confirms the endpoint is protected and serving the right model
 
-make start ARGS=--wait    # every day after: restarts or creates a pool Pod, waits until ready
+make start ARGS=--wait    # every day after: restarts or creates a pool Pod, retrying up to 20 min
+                           # if the GPU is occupied, then waits until ready
 make stop                 # when you're done (ends the GPU billing)
 ```
 
